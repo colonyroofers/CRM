@@ -103,10 +103,10 @@
 
     // ─── ROLE SYSTEM ───────────────────────────────────────────
     const ROLES = {
-      admin: { label: "Admin", modules: ["estimating", "production", "sales", "service", "directory", "reports", "catalog"], color: "#E63946" },
-      estimator: { label: "Estimator", modules: ["estimating", "sales", "directory", "catalog"], color: "#3B82F6" },
-      coordinator: { label: "Coordinator", modules: ["production", "sales", "service", "directory", "reports"], color: "#10B981" },
-      superintendent: { label: "Superintendent", modules: ["production", "service", "directory"], color: "#F59E0B" },
+      admin: { label: "Admin", modules: ["directory", "sales", "estimating", "production", "catalog", "service", "accounting", "reports"], color: "#E63946" },
+      estimator: { label: "Estimator", modules: ["directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
+      coordinator: { label: "Coordinator", modules: ["directory", "sales", "production", "service", "reports"], color: "#10B981" },
+      superintendent: { label: "Superintendent", modules: ["directory", "production", "service"], color: "#F59E0B" },
     };
 
     // Map emails to roles — in production this would be Firestore
@@ -3319,7 +3319,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           <div style={{ maxWidth: 1400, margin: "0 auto", padding: "28px 32px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
               <div>
-                <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Sales Pipeline</h1>
+                <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Project Sales</h1>
                 <p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Jobs linked to your client database</p>
               </div>
               <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: `0 4px 12px ${C.red}30` }}>{I.plus} New Lead</button>
@@ -3849,6 +3849,35 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
+    // MODULE: ACCOUNTING (Placeholder)
+    // ============================================================
+    function AccountingModule({ user, role }) {
+      return (
+        <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
+          <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
+            <div style={{ marginBottom: 24 }}><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Accounting</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Job costing, invoicing & financial tracking</p></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+              <StatCard label="Revenue" value="—" icon={I.dollar} accent={C.green} />
+              <StatCard label="Expenses" value="—" icon={I.barChart} accent={C.red} />
+              <StatCard label="Outstanding" value="—" icon={I.clock} accent={C.yellow} />
+              <StatCard label="Margin" value="—" icon={I.layers} accent={C.navy} />
+            </div>
+            <div style={{ padding: "60px 40px", textAlign: "center", background: C.white, borderRadius: 12, border: `2px dashed ${C.gray300}` }}>
+              <div style={{ fontSize: 48, opacity: 0.15, marginBottom: 16 }}>💰</div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Accounting Module — Coming Soon</h2>
+              <p style={{ fontSize: 14, color: C.gray500, margin: "0 0 24px", maxWidth: 500, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>Job costing linked to production projects, expense tracking from Sage/Ramp, invoicing, AP/AR, and margin reporting — all connected to your client database.</p>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+                {["Job Cost Tracking", "Invoice Generation", "AP / AR", "Sage Integration", "Ramp Sync", "Margin Reports"].map(f => (
+                  <span key={f} style={{ padding: "6px 14px", borderRadius: 20, background: C.gray100, color: C.gray500, fontSize: 12, fontWeight: 600 }}>{f}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
     // MODULE: REPORTS (Cross-module reporting)
     // ============================================================
     function ReportsModule({ user, role, entities, salesLeads, serviceTickets }) {
@@ -3962,13 +3991,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const currentModule = activeModule && allowedModules.includes(activeModule) ? activeModule : allowedModules[0] || "production";
 
       const modules = [
+        { key: "directory", label: "Directory", icon: "📇" },
+        { key: "sales", label: "Project Sales", icon: "💼" },
         { key: "estimating", label: "Estimating", icon: "📐" },
         { key: "production", label: "Production", icon: "🏗️" },
-        { key: "sales", label: "Sales", icon: "💼" },
-        { key: "service", label: "Service", icon: "🔧" },
-        { key: "directory", label: "Directory", icon: "📇" },
-        { key: "reports", label: "Reports", icon: "📊" },
         { key: "catalog", label: "Catalog", icon: "📦" },
+        { key: "service", label: "Service", icon: "🔧" },
+        { key: "accounting", label: "Accounting", icon: "💰" },
+        { key: "reports", label: "Reports", icon: "📊" },
       ].filter(m => allowedModules.includes(m.key));
 
       return (
@@ -3994,6 +4024,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
+          {currentModule === "accounting" && <AccountingModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
         </div>
