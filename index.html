@@ -3262,8 +3262,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
       { id: "closed_won", label: "Closed Won", color: "#10B981" },
       { id: "closed_lost", label: "Closed Lost", color: "#EF4444" },
     ];
+    const PROPERTY_TYPES = ["Residential", "Apartment Complex", "HOA / Condo", "Office / Commercial", "Retail", "Industrial / Warehouse", "Church / Non-Profit", "Government", "Other"];
+    const CONTACT_TYPES = ["B2C", "B2B"];
     const LEAD_SOURCES = ["ZoomInfo", "Referral", "Website", "Cold Outreach", "Repeat Client", "Property Manager", "Other"];
-    const PROPERTY_TYPES = ["Apartment Complex", "HOA / Condo", "Office / Commercial", "Retail", "Industrial / Warehouse", "Church / Non-Profit", "Government", "Other"];
 
     function SalesModule({ user, role, entities }) {
       const { companies, properties, contacts, setCompanies } = entities;
@@ -3280,7 +3281,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const [viewMode, setViewMode] = useState("kanban");
       const [selectedLead, setSelectedLead] = useState(null);
-      const [showCreate, setShowCreate] = useState(false);
       const [search, setSearch] = useState("");
       const [marketFilter, setMarketFilter] = useState("All");
       const [dragLead, setDragLead] = useState(null);
@@ -3294,7 +3294,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const wonValue = filtered.filter(l => l.stage === "closed_won").reduce((s, l) => s + (l.estimatedValue || 0), 0);
       const openLeads = filtered.filter(l => !["closed_won", "closed_lost"].includes(l.stage)).length;
 
-      const handleCreate = (lead) => { setLeads(prev => [{ ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Lead created", by: user.name, at: new Date().toISOString() }] }, ...prev]); setShowCreate(false); };
       const handleUpdate = (id, updates) => setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
       const handleStageChange = (leadId, newStage) => { setLeads(prev => prev.map(l => l.id !== leadId ? l : { ...l, stage: newStage, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to ${SALES_STAGES.find(s => s.id === newStage)?.label}`, by: user.name, at: new Date().toISOString() }] })); };
       const handleDrop = (stageId, e) => { e.preventDefault(); if (dragLead && dragLead.stage !== stageId) handleStageChange(dragLead.id, stageId); setDragLead(null); };
@@ -3322,7 +3321,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Project Sales</h1>
                 <p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Jobs linked to your client database</p>
               </div>
-              <button onClick={() => setShowCreate(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: `0 4px 12px ${C.red}30` }}>{I.plus} New Lead</button>
+              <button onClick={() => alert("New jobs are created from the Directory module. Go to Directory → select a company or property → Create Job.")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: C.white, color: C.gray500, border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📇 Create jobs from Directory</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
               <StatCard label="Open Leads" value={openLeads} icon={I.user} accent={C.blue} />
@@ -3382,15 +3381,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
               </div>
             )}
           </div>
-          {showCreate && <CreateLeadModal entities={entities} onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
           {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} />}
         </div>
       );
     }
 
-    function CreateLeadModal({ entities, onClose, onCreate }) {
+    function CreateLeadModal({ entities, onClose, onCreate, prefill }) {
       const { companies, properties, contacts, setCompanies } = entities;
-      const [form, setForm] = useState({ companyId: "", propertyId: "", contactId: "", company: "", contactName: "", contactEmail: "", contactPhone: "", market: "ATL", source: "ZoomInfo", propertyType: "Apartment Complex", estimatedValue: 0, sqft: 0, address: "", notes: "" });
+      const [form, setForm] = useState({ companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", company: "", contactName: "", contactEmail: "", contactPhone: "", market: "ATL", source: "ZoomInfo", propertyType: "Apartment Complex", estimatedValue: 0, sqft: 0, address: "", notes: "" });
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
       const filteredProps = form.companyId ? properties.filter(p => p.companyId === form.companyId) : properties;
@@ -3509,12 +3507,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     const COMPANY_TYPES = ["Property Manager", "HOA / Condo", "Owner / Investor", "General Contractor", "Government", "Non-Profit", "Other"];
 
-    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets }) {
+    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads }) {
       const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [tab, setTab] = useState("companies");
       const [search, setSearch] = useState("");
       const [showCreate, setShowCreate] = useState(null);
       const [selected, setSelected] = useState(null);
+      const [showCreateLead, setShowCreateLead] = useState(null); // { companyId, propertyId, contactId }
 
       const s = search.toLowerCase();
       const filteredCo = companies.filter(c => !s || c.name?.toLowerCase().includes(s));
@@ -3536,6 +3535,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
         if (type === "property") setProperties(prev => prev.filter(p => p.id !== id));
         if (type === "contact") setContacts(prev => prev.filter(c => c.id !== id));
         setSelected(null);
+      };
+      const handleCreateLead = (lead) => {
+        const newLead = { ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Lead created from Directory", by: user.name, at: new Date().toISOString() }] };
+        setSalesLeads(prev => [newLead, ...prev]);
+        setShowCreateLead(null);
       };
 
       const EntityRow = ({ icon, name, sub, leadCount, ticketCount, onClick }) => (
@@ -3591,6 +3595,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {relContacts.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Contacts ({relContacts.length})</h4>
                   {relContacts.map(c => <div key={c.id} onClick={() => setSelected({ type: "contact", id: c.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>👤 {c.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{c.email} · {c.phone}</div></div>)}
                 </div>}
+                {/* Create Job button */}
+                <div style={{ marginBottom: 24 }}>
+                  <button onClick={() => { setSelected(null); setShowCreateLead({ companyId: type === "company" ? id : entity.companyId || "", propertyId: type === "property" ? id : "", contactId: type === "contact" ? id : "" }); }} style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 4px 12px ${C.red}30` }}>{I.plus} Create Job for {entity.name}</button>
+                </div>
                 {/* Sales History */}
                 <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Sales History ({leads.length})</h4>
                   {leads.length > 0 ? leads.map(l => { const stg = SALES_STAGES.find(s => s.id === l.stage); return (
@@ -3641,33 +3649,105 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {tab === "contacts" && (filteredCt.length > 0 ? filteredCt.map(c => <EntityRow key={c.id} icon="👤" name={c.name} sub={`${c.email || "—"} · ${companies.find(co => co.id === c.companyId)?.name || "No company"}`} leadCount={leadsFor("contact", c.id).length} ticketCount={ticketsFor("contact", c.id).length} onClick={() => setSelected({ type: "contact", id: c.id })} />) : <div style={{ padding: 32, textAlign: "center", color: C.gray400, fontSize: 12 }}>No contacts</div>)}
             </div>
           </div>
-          {showCreate && <CreateEntityModal type={showCreate} companies={companies} onClose={() => setShowCreate(null)} onCreate={handleCreate} />}
+          {showCreate && <CreateEntityModal type={showCreate} companies={companies} contacts={contacts} onClose={() => setShowCreate(null)} onCreate={handleCreate} />}
+          {showCreateLead && <CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} />}
           <EntityDetail />
         </div>
       );
     }
 
-    function CreateEntityModal({ type, companies, onClose, onCreate }) {
+    function CreateEntityModal({ type, companies, contacts, onClose, onCreate }) {
       const labels = { company: "Company", property: "Property", contact: "Contact" };
-      const [form, setForm] = useState(type === "company" ? { name: "", market: "ATL", type: "Property Manager", phone: "", email: "", address: "", notes: "" } : type === "property" ? { name: "", companyId: "", address: "", market: "ATL", sqft: 0, roofType: "", buildingCount: 1, notes: "" } : { name: "", companyId: "", email: "", phone: "", title: "", notes: "" });
+      const [form, setForm] = useState(
+        type === "company" ? { name: "", market: "ATL", type: "Property Manager", phone: "", email: "", address: "", notes: "" } :
+        type === "property" ? { name: "", companyId: "", contactId: "", propertyType: "Apartment Complex", address: "", market: "ATL", sqft: 0, roofType: "", buildingCount: 1, notes: "" } :
+        { name: "", companyId: "", contactType: "B2B", email: "", phone: "", title: "", notes: "" }
+      );
+      const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
+      const lsReq = { ...ls, color: C.navy };
+
+      const isResidential = type === "property" && form.propertyType === "Residential";
+      const propertyNeedsCompany = type === "property" && !isResidential;
+      const contactIsB2B = type === "contact" && form.contactType === "B2B";
+      const filteredContacts = form.companyId ? (contacts || []).filter(c => c.companyId === form.companyId) : (contacts || []);
+
+      const validate = () => {
+        if (!form.name?.trim()) return "Name is required.";
+        if (type === "property") {
+          if (!form.propertyType) return "Property type is required.";
+          if (propertyNeedsCompany && !form.companyId) return "Non-residential properties must have a company.";
+          if (!form.contactId) return "A contact is required for every property.";
+        }
+        if (type === "contact") {
+          if (!form.contactType) return "Contact type (B2C or B2B) is required.";
+          if (contactIsB2B && !form.companyId) return "B2B contacts must have a company.";
+        }
+        return "";
+      };
+
+      const handleSubmit = () => {
+        const err = validate();
+        if (err) { setValidationError(err); return; }
+        setValidationError("");
+        onCreate(type, form);
+      };
+
       return (
         <div style={{ position: "fixed", inset: 0, zIndex: 2100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
-          <div style={{ background: C.white, borderRadius: 16, width: 480, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>New {labels[type]}</h2>
               <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400 }}>{I.x}</button>
             </div>
             <div style={{ padding: "20px 28px 28px", display: "grid", gap: 12 }}>
-              <div><label style={ls}>Name *</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
-              {type === "company" && <><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div><div><label style={ls}>Type</label><select style={fs} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>{COMPANY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div></div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div><div><label style={ls}>Email</label><input style={fs} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div></div><div><label style={ls}>Address</label><input style={fs} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div></>}
-              {type === "property" && <><div><label style={ls}>Company</label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— Select —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label style={ls}>Address</label><input style={fs} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}><div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div><div><label style={ls}>Sq Ft</label><input style={fs} type="number" value={form.sqft} onChange={e => setForm(f => ({ ...f, sqft: Number(e.target.value) }))} /></div><div><label style={ls}>Roof Type</label><select style={fs} value={form.roofType} onChange={e => setForm(f => ({ ...f, roofType: e.target.value }))}><option value="">—</option>{ROOF_TYPES.map(r => <option key={r} value={r}>{r}</option>)}</select></div></div></>}
-              {type === "contact" && <><div><label style={ls}>Company</label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— Select —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><label style={ls}>Email</label><input style={fs} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div><div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div></div><div><label style={ls}>Title</label><input style={fs} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div></>}
+              <div><label style={lsReq}>Name *</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+
+              {/* ── COMPANY FIELDS ── */}
+              {type === "company" && <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div>
+                  <div><label style={ls}>Type</label><select style={fs} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>{COMPANY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+                  <div><label style={ls}>Email</label><input style={fs} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+                </div>
+                <div><label style={ls}>Address</label><input style={fs} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
+              </>}
+
+              {/* ── PROPERTY FIELDS ── */}
+              {type === "property" && <>
+                <div><label style={lsReq}>Property Type *</label><select style={fs} value={form.propertyType} onChange={e => setForm(f => ({ ...f, propertyType: e.target.value, companyId: e.target.value === "Residential" ? "" : f.companyId }))}>{PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                {!isResidential && <div><label style={lsReq}>Company * <span style={{ fontWeight: 400, color: C.gray400 }}>(required for non-residential)</span></label><select style={{ ...fs, borderColor: propertyNeedsCompany && !form.companyId ? C.red : C.gray300 }} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— Select company —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+                {isResidential && <div><label style={ls}>Company <span style={{ fontWeight: 400, color: C.gray400 }}>(optional for residential)</span></label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— None —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+                <div><label style={lsReq}>Contact * <span style={{ fontWeight: 400, color: C.gray400 }}>(every property needs a point of contact)</span></label><select style={{ ...fs, borderColor: !form.contactId ? C.red + "60" : C.gray300 }} value={form.contactId} onChange={e => setForm(f => ({ ...f, contactId: e.target.value }))}><option value="">— Select contact —</option>{filteredContacts.map(c => <option key={c.id} value={c.id}>{c.name} {c.email ? `(${c.email})` : ""}</option>)}{filteredContacts.length === 0 && <option disabled>No contacts — create one first</option>}</select></div>
+                <div><label style={ls}>Address</label><input style={fs} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div>
+                  <div><label style={ls}>Sq Ft</label><input style={fs} type="number" value={form.sqft} onChange={e => setForm(f => ({ ...f, sqft: Number(e.target.value) }))} /></div>
+                  <div><label style={ls}>Roof Type</label><select style={fs} value={form.roofType} onChange={e => setForm(f => ({ ...f, roofType: e.target.value }))}><option value="">—</option>{ROOF_TYPES.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+                </div>
+              </>}
+
+              {/* ── CONTACT FIELDS ── */}
+              {type === "contact" && <>
+                <div><label style={lsReq}>Contact Type *</label><select style={fs} value={form.contactType} onChange={e => setForm(f => ({ ...f, contactType: e.target.value, companyId: e.target.value === "B2C" ? "" : f.companyId }))}>{CONTACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                {contactIsB2B && <div><label style={lsReq}>Company * <span style={{ fontWeight: 400, color: C.gray400 }}>(required for B2B)</span></label><select style={{ ...fs, borderColor: contactIsB2B && !form.companyId ? C.red : C.gray300 }} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— Select company —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+                {!contactIsB2B && <div><label style={ls}>Company <span style={{ fontWeight: 400, color: C.gray400 }}>(optional for B2C)</span></label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— None —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Email</label><input style={fs} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+                  <div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+                </div>
+                <div><label style={ls}>Title / Role</label><input style={fs} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
+              </>}
+
               <div><label style={ls}>Notes</label><textarea style={{ ...fs, minHeight: 50, resize: "vertical" }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></div>
+              {validationError && <div style={{ padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, fontWeight: 600 }}>{validationError}</div>}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                <button onClick={() => { if (form.name?.trim()) onCreate(type, form); }} disabled={!form.name?.trim()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: form.name?.trim() ? C.green : C.gray200, color: form.name?.trim() ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: form.name?.trim() ? "pointer" : "default" }}>Create {labels[type]}</button>
+                <button onClick={handleSubmit} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.green, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Create {labels[type]}</button>
               </div>
             </div>
           </div>
@@ -3773,16 +3853,23 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
     function CreateTicketModal({ companies, properties, contacts, onClose, onCreate, onCreateEntity }) {
       const [form, setForm] = useState({ subject: "", type: "Leak / Repair", priority: "Medium", market: "ATL", companyId: "", propertyId: "", contactId: "", description: "", assignedTo: "" });
+      const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
+      const lsReq = { ...ls, color: C.navy };
       const filteredProps = form.companyId ? properties.filter(p => p.companyId === form.companyId) : properties;
       const filteredContacts = form.companyId ? contacts.filter(c => c.companyId === form.companyId) : contacts;
+      const handleSubmit = () => {
+        if (!form.subject.trim()) { setValidationError("Subject is required."); return; }
+        if (!form.propertyId) { setValidationError("A property is required for every ticket."); return; }
+        setValidationError(""); onCreate(form);
+      };
       return (
         <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
           <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}><h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>New Service Ticket</h2><button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400 }}>{I.x}</button></div>
             <div style={{ padding: "20px 28px 28px", display: "grid", gap: 14 }}>
-              <div><label style={ls}>Subject *</label><input style={fs} value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="Brief description of the issue" /></div>
+              <div><label style={lsReq}>Subject *</label><input style={fs} value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="Brief description of the issue" /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 <div><label style={ls}>Type</label><select style={fs} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>{TICKET_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                 <div><label style={ls}>Priority</label><select style={fs} value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>{TICKET_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
@@ -3792,17 +3879,16 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Link to Directory</h4>
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}><div style={{ flex: 1 }}><label style={ls}>Company</label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value, propertyId: "", contactId: "" }))}><option value="">— Select —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><button onClick={() => { const n = prompt("Company name:"); if (n) onCreateEntity("company", { name: n, market: form.market }); }} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ New</button></div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div><label style={ls}>Property</label><select style={fs} value={form.propertyId} onChange={e => setForm(f => ({ ...f, propertyId: e.target.value }))}><option value="">— Select —</option>{filteredProps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                    <div><label style={ls}>Contact</label><select style={fs} value={form.contactId} onChange={e => setForm(f => ({ ...f, contactId: e.target.value }))}><option value="">— Select —</option>{filteredContacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                  </div>
+                  <div><label style={lsReq}>Property * <span style={{ fontWeight: 400, color: C.gray400 }}>(required)</span></label><select style={{ ...fs, borderColor: !form.propertyId ? C.red + "60" : C.gray300 }} value={form.propertyId} onChange={e => setForm(f => ({ ...f, propertyId: e.target.value }))}><option value="">— Select property —</option>{filteredProps.map(p => <option key={p.id} value={p.id}>{p.name} {p.address ? `(${p.address})` : ""}</option>)}{filteredProps.length === 0 && <option disabled>No properties — create one in Directory first</option>}</select></div>
+                  <div><label style={ls}>Contact</label><select style={fs} value={form.contactId} onChange={e => setForm(f => ({ ...f, contactId: e.target.value }))}><option value="">— Select —</option>{filteredContacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
                 </div>
               </div>
               <div><label style={ls}>Assigned To</label><select style={fs} value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))}><option value="">Unassigned</option>{USERS.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
               <div><label style={ls}>Description</label><textarea style={{ ...fs, minHeight: 80, resize: "vertical" }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+              {validationError && <div style={{ padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, fontWeight: 600 }}>{validationError}</div>}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                <button onClick={() => { if (form.subject.trim()) onCreate(form); }} disabled={!form.subject.trim()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: form.subject.trim() ? `linear-gradient(135deg, ${C.red}, ${C.redDark})` : C.gray200, color: form.subject.trim() ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: form.subject.trim() ? "pointer" : "default" }}>Create Ticket</button>
+                <button onClick={handleSubmit} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Create Ticket</button>
               </div>
             </div>
           </div>
@@ -4312,7 +4398,7 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
           {currentModule === "production" && <ProductionModule user={user} role={role} />}
           {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
-          {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
+          {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} />}
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
