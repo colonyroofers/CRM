@@ -3958,10 +3958,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
-    // AI AGENT (Platform-wide floating assistant)
+    // AI AGENT (Platform-wide — can read AND write CRM data)
     // ============================================================
-    function AIAgent({ user, role, entities, salesLeads, serviceTickets, currentModule }) {
-      const { companies, properties, contacts } = entities;
+    function AIAgent({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets, currentModule }) {
+      const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [open, setOpen] = useState(false);
       const [messages, setMessages] = useState([]);
       const [input, setInput] = useState("");
@@ -3971,31 +3971,114 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       useEffect(() => { if (open) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); inputRef.current?.focus(); } }, [open, messages]);
 
+      // ── Tool definitions for Claude ──────────────────────────
+      const TOOLS = [
+        { name: "create_company", description: "Create a new company in the CRM directory", input_schema: { type: "object", properties: { name: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, type: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, address: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
+        { name: "create_property", description: "Create a new property linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" } }, required: ["name"] } },
+        { name: "create_contact", description: "Create a new contact linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" } }, required: ["name"] } },
+        { name: "create_lead", description: "Create a new sales lead/opportunity in the pipeline", input_schema: { type: "object", properties: { company: { type: "string", description: "Company name if not linking to existing" }, companyId: { type: "string", description: "ID of existing company" }, propertyId: { type: "string" }, contactId: { type: "string" }, contactName: { type: "string" }, contactEmail: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, source: { type: "string" }, estimatedValue: { type: "number" }, notes: { type: "string" } }, required: [] } },
+        { name: "update_lead", description: "Update an existing sales lead — change stage, value, notes, next action, etc.", input_schema: { type: "object", properties: { leadId: { type: "string" }, stage: { type: "string", enum: ["new_lead", "contacted", "meeting_set", "proposal_sent", "negotiation", "closed_won", "closed_lost"] }, estimatedValue: { type: "number" }, nextAction: { type: "string" }, notes: { type: "string" } }, required: ["leadId"] } },
+        { name: "create_ticket", description: "Create a new service ticket", input_schema: { type: "object", properties: { subject: { type: "string" }, type: { type: "string", enum: ["Leak / Repair", "Warranty Claim", "Scheduled Maintenance", "Inspection Follow-Up", "Emergency", "Other"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, companyId: { type: "string" }, propertyId: { type: "string" }, contactId: { type: "string" }, description: { type: "string" }, assignedTo: { type: "string" } }, required: ["subject"] } },
+        { name: "update_ticket", description: "Update a service ticket — change status, priority, assignment, add notes", input_schema: { type: "object", properties: { ticketId: { type: "string" }, status: { type: "string", enum: ["New", "Dispatched", "In Progress", "On Hold", "Complete", "Closed"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, assignedTo: { type: "string" }, notes: { type: "string" } }, required: ["ticketId"] } },
+        { name: "search_crm", description: "Search across all CRM data — companies, properties, contacts, leads, tickets. Use this to find IDs before creating or updating records.", input_schema: { type: "object", properties: { query: { type: "string", description: "Search term" }, type: { type: "string", enum: ["all", "companies", "properties", "contacts", "leads", "tickets"] } }, required: ["query"] } },
+        { name: "draft_email", description: "Open a pre-filled Gmail compose window to a contact", input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
+      ];
+
+      // ── Tool execution ───────────────────────────────────────
+      const executeTool = (name, input) => {
+        const id = generateId();
+        const now = new Date().toISOString();
+        try {
+          if (name === "create_company") {
+            const item = { ...input, id, createdAt: now };
+            setCompanies(prev => [item, ...prev]);
+            return { success: true, message: `Created company "${input.name}" (ID: ${id})`, id };
+          }
+          if (name === "create_property") {
+            const item = { ...input, id, createdAt: now };
+            setProperties(prev => [item, ...prev]);
+            return { success: true, message: `Created property "${input.name}" (ID: ${id})`, id };
+          }
+          if (name === "create_contact") {
+            const item = { ...input, id, createdAt: now };
+            setContacts(prev => [item, ...prev]);
+            return { success: true, message: `Created contact "${input.name}" (ID: ${id})`, id };
+          }
+          if (name === "create_lead") {
+            const lead = { ...input, id, stage: "new_lead", createdAt: now, activities: [{ type: "created", text: "Created by AI Agent", by: user.name, at: now }] };
+            setSalesLeads(prev => [lead, ...prev]);
+            return { success: true, message: `Created lead for "${input.company || input.companyId}" (ID: ${id})`, id };
+          }
+          if (name === "update_lead") {
+            const { leadId, notes, ...updates } = input;
+            const lead = salesLeads.find(l => l.id === leadId);
+            if (!lead) return { success: false, message: `Lead ${leadId} not found` };
+            const activity = { type: "ai_update", text: `AI Agent: ${Object.entries(updates).map(([k, v]) => `${k}→${v}`).join(", ")}${notes ? `. Note: ${notes}` : ""}`, by: user.name, at: now };
+            setSalesLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...updates, activities: [...(l.activities || []), activity] } : l));
+            return { success: true, message: `Updated lead ${leadId}` };
+          }
+          if (name === "create_ticket") {
+            const ticket = { ...input, id, status: "New", createdAt: now, createdBy: user.name + " (via AI)", activities: [{ type: "created", text: "Created by AI Agent", by: user.name, at: now }] };
+            setServiceTickets(prev => [ticket, ...prev]);
+            return { success: true, message: `Created ticket "${input.subject}" (ID: ${id})`, id };
+          }
+          if (name === "update_ticket") {
+            const { ticketId, notes, ...updates } = input;
+            const ticket = serviceTickets.find(t => t.id === ticketId);
+            if (!ticket) return { success: false, message: `Ticket ${ticketId} not found` };
+            const activity = { type: "ai_update", text: `AI Agent: ${Object.entries(updates).map(([k, v]) => `${k}→${v}`).join(", ")}${notes ? `. Note: ${notes}` : ""}`, by: user.name, at: now };
+            setServiceTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates, activities: [...(t.activities || []), activity] } : t));
+            return { success: true, message: `Updated ticket ${ticketId}` };
+          }
+          if (name === "search_crm") {
+            const q = (input.query || "").toLowerCase();
+            const t = input.type || "all";
+            const results = {};
+            if (t === "all" || t === "companies") results.companies = companies.filter(c => c.name?.toLowerCase().includes(q)).slice(0, 10).map(c => ({ id: c.id, name: c.name, market: c.market, type: c.type }));
+            if (t === "all" || t === "properties") results.properties = properties.filter(p => (p.name?.toLowerCase().includes(q) || p.address?.toLowerCase().includes(q))).slice(0, 10).map(p => ({ id: p.id, name: p.name, address: p.address, companyId: p.companyId, companyName: companies.find(c => c.id === p.companyId)?.name }));
+            if (t === "all" || t === "contacts") results.contacts = contacts.filter(c => (c.name?.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q))).slice(0, 10).map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone, companyId: c.companyId, companyName: companies.find(co => co.id === c.companyId)?.name }));
+            if (t === "all" || t === "leads") results.leads = salesLeads.filter(l => ((l.company || "").toLowerCase().includes(q) || companies.find(c => c.id === l.companyId)?.name?.toLowerCase().includes(q))).slice(0, 10).map(l => ({ id: l.id, company: companies.find(c => c.id === l.companyId)?.name || l.company, stage: l.stage, estimatedValue: l.estimatedValue, market: l.market }));
+            if (t === "all" || t === "tickets") results.tickets = serviceTickets.filter(t => (t.subject?.toLowerCase().includes(q) || companies.find(c => c.id === t.companyId)?.name?.toLowerCase().includes(q))).slice(0, 10).map(t => ({ id: t.id, subject: t.subject, status: t.status, priority: t.priority, company: companies.find(c => c.id === t.companyId)?.name }));
+            return { success: true, results };
+          }
+          if (name === "draft_email") {
+            window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(input.to)}&su=${encodeURIComponent(input.subject)}&body=${encodeURIComponent(input.body)}`, "_blank");
+            return { success: true, message: `Opened Gmail compose to ${input.to}` };
+          }
+          return { success: false, message: `Unknown tool: ${name}` };
+        } catch (e) { return { success: false, message: `Error: ${e.message}` }; }
+      };
+
+      // ── Build system context ─────────────────────────────────
       const buildContext = () => {
         const leads = salesLeads || [];
         const tickets = serviceTickets || [];
         const openLeads = leads.filter(l => !["closed_won", "closed_lost"].includes(l.stage));
         const wonLeads = leads.filter(l => l.stage === "closed_won");
         const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status));
-        const emergencyTickets = tickets.filter(t => t.priority === "Emergency" && !["Complete", "Closed"].includes(t.status));
 
-        return `You are the AI assistant for Colony Roofers CRM. You help with all aspects of the business — sales, service, estimating, production, finance, and client management. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. They are currently viewing the ${currentModule} module.
+        return `You are the AI assistant for Colony Roofers CRM. You can both ANSWER QUESTIONS and TAKE ACTIONS using tools. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. Currently viewing: ${currentModule} module.
 
-CURRENT CRM DATA SNAPSHOT:
-- Companies (${companies.length}): ${companies.slice(0, 20).map(c => `${c.name} [${c.market || "—"}]`).join(", ")}${companies.length > 20 ? ` ...+${companies.length - 20} more` : ""}
-- Properties (${properties.length}): ${properties.slice(0, 15).map(p => `${p.name} (${companies.find(c => c.id === p.companyId)?.name || "—"})`).join(", ")}${properties.length > 15 ? ` ...+${properties.length - 15} more` : ""}
-- Contacts (${contacts.length}): ${contacts.slice(0, 15).map(c => `${c.name} — ${c.email || "no email"} (${companies.find(co => co.id === c.companyId)?.name || "—"})`).join(", ")}${contacts.length > 15 ? ` ...+${contacts.length - 15} more` : ""}
-- Sales Leads (${leads.length} total, ${openLeads.length} open, ${wonLeads.length} won): Pipeline value $${openLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0).toLocaleString()}. Won value $${wonLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0).toLocaleString()}.
-${leads.slice(0, 15).map(l => `  • ${companies.find(c => c.id === l.companyId)?.name || l.company || "—"} | ${l.stage} | $${(l.estimatedValue || 0).toLocaleString()} | ${l.source || "—"}`).join("\n")}${leads.length > 15 ? `\n  ...+${leads.length - 15} more leads` : ""}
-- Service Tickets (${tickets.length} total, ${openTickets.length} open, ${emergencyTickets.length} emergencies):
-${tickets.slice(0, 15).map(t => `  • ${t.subject} | ${companies.find(c => c.id === t.companyId)?.name || "—"} | ${t.status} | ${t.priority} | ${t.type}`).join("\n")}${tickets.length > 15 ? `\n  ...+${tickets.length - 15} more tickets` : ""}
+IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm first. Always confirm what you did after taking actions.
 
+When drafting emails, use Zach's style: short (1-3 sentences), direct, casual but professional. Client emails get a brief personal opener. Internal emails skip pleasantries. Sign off: Zach Reece, Owner / Colony Roofers / 404-806-0956
+
+CRM SNAPSHOT:
+- Companies (${companies.length}): ${companies.slice(0, 15).map(c => `"${c.name}" [id:${c.id}, ${c.market || "—"}]`).join(", ")}${companies.length > 15 ? ` +${companies.length - 15} more` : ""}
+- Properties (${properties.length}): ${properties.slice(0, 10).map(p => `"${p.name}" [id:${p.id}, co:${companies.find(c => c.id === p.companyId)?.name || "—"}]`).join(", ")}${properties.length > 10 ? ` +${properties.length - 10} more` : ""}
+- Contacts (${contacts.length}): ${contacts.slice(0, 10).map(c => `"${c.name}" [id:${c.id}, ${c.email || "—"}, co:${companies.find(co => co.id === c.companyId)?.name || "—"}]`).join(", ")}${contacts.length > 10 ? ` +${contacts.length - 10} more` : ""}
+- Sales Leads (${leads.length} total, ${openLeads.length} open, ${wonLeads.length} won, pipeline $${openLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0).toLocaleString()}):
+${leads.slice(0, 12).map(l => `  [id:${l.id}] ${companies.find(c => c.id === l.companyId)?.name || l.company || "—"} | ${l.stage} | $${(l.estimatedValue || 0).toLocaleString()} | ${l.source || "—"}`).join("\n")}${leads.length > 12 ? `\n  +${leads.length - 12} more` : ""}
+- Service Tickets (${tickets.length} total, ${openTickets.length} open):
+${tickets.slice(0, 12).map(t => `  [id:${t.id}] ${t.subject} | ${companies.find(c => c.id === t.companyId)?.name || "—"} | ${t.status} | ${t.priority}`).join("\n")}${tickets.length > 12 ? `\n  +${tickets.length - 12} more` : ""}
+
+TEAM: Zach (Owner), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
 MARKETS: Atlanta (ATL), Tampa (TPA), Dallas (DFW)
-TEAM: Zach (Owner/Admin), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
-
-You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tickets, identifying trends, recommending next actions, answering questions about any entity, preparing meeting briefs, suggesting follow-ups, and any other business task. Keep responses concise and actionable.`;
+SALES STAGES: new_lead, contacted, meeting_set, proposal_sent, negotiation, closed_won, closed_lost
+TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       };
 
+      // ── Send message with tool-use loop ──────────────────────
       const handleSend = async () => {
         const text = input.trim();
         if (!text || processing) return;
@@ -4005,30 +4088,66 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
         setProcessing(true);
 
         try {
-          const history = [...messages, userMsg].slice(-10).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
-          const response = await fetch("/api/ai", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: buildContext(), messages: history }),
+          let history = [...messages, userMsg].slice(-12);
+          let apiMessages = history.map(m => {
+            if (m.role === "user") return { role: "user", content: m.text };
+            if (m.toolUse) return { role: "assistant", content: m.toolUse };
+            if (m.toolResult) return { role: "user", content: m.toolResult };
+            return { role: "assistant", content: m.text };
           });
-          if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || "API error " + response.status); }
-          const result = await response.json();
-          const reply = result.content?.find(c => c.type === "text")?.text || "No response.";
-          setMessages(prev => [...prev, { role: "assistant", text: reply }]);
+
+          const actionsTaken = [];
+          let maxLoops = 5;
+
+          while (maxLoops-- > 0) {
+            const response = await fetch("/api/ai", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, system: buildContext(), tools: TOOLS, messages: apiMessages }),
+            });
+            if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || "API error " + response.status); }
+            const result = await response.json();
+
+            const textBlocks = result.content?.filter(c => c.type === "text") || [];
+            const toolBlocks = result.content?.filter(c => c.type === "tool_use") || [];
+
+            // If no tool calls, we're done
+            if (toolBlocks.length === 0) {
+              const reply = textBlocks.map(t => t.text).join("\n") || "Done.";
+              const finalText = actionsTaken.length > 0 ? `${reply}\n\n✅ Actions taken:\n${actionsTaken.map(a => `• ${a}`).join("\n")}` : reply;
+              setMessages(prev => [...prev, { role: "assistant", text: finalText }]);
+              break;
+            }
+
+            // Execute tools
+            const toolResults = [];
+            for (const tool of toolBlocks) {
+              const result = executeTool(tool.name, tool.input);
+              toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(result) });
+              if (result.success && result.message) actionsTaken.push(result.message);
+            }
+
+            // Show interim text if any
+            if (textBlocks.length > 0) {
+              setMessages(prev => [...prev, { role: "assistant", text: textBlocks.map(t => t.text).join("\n"), interim: true }]);
+            }
+
+            // Continue the conversation with tool results
+            apiMessages = [...apiMessages, { role: "assistant", content: result.content }, { role: "user", content: toolResults }];
+          }
         } catch (err) {
           setMessages(prev => [...prev, { role: "assistant", text: "Error: " + (err.message || "Something went wrong"), error: true }]);
         } finally { setProcessing(false); }
       };
 
       const suggestions = [
-        "Summarize my pipeline",
-        "Any emergency tickets?",
-        "Draft a follow-up email",
-        "Which leads need attention?",
-        "Show me this week's activity",
-        "Top companies by revenue",
+        "Create a lead for Greystar in Atlanta",
+        "Open an emergency ticket for Tampa Palms",
+        "Move the Brookhaven lead to proposal sent",
+        "Add a new company called Pinnacle Property Mgmt",
+        "Draft a follow-up email to the Tampa Palms contact",
+        "What's my pipeline looking like?",
       ];
 
-      // Floating button
       if (!open) {
         return (
           <button onClick={() => setOpen(true)} style={{
@@ -4040,23 +4159,25 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "transform 0.2s, box-shadow 0.2s",
           }}
-          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = `0 8px 32px ${C.red}50, 0 4px 12px rgba(0,0,0,0.25)`; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = `0 6px 24px ${C.red}40, 0 2px 8px rgba(0,0,0,0.2)`; }}>
+          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}>
             {I.zap}
           </button>
         );
       }
 
-      // Chat panel
       return (
-        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9000, width: 420, maxWidth: "calc(100vw - 48px)", height: 560, maxHeight: "calc(100vh - 100px)", borderRadius: 16, background: C.white, boxShadow: "0 20px 60px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9000, width: 440, maxWidth: "calc(100vw - 48px)", height: 580, maxHeight: "calc(100vh - 100px)", borderRadius: 16, background: C.white, boxShadow: "0 20px 60px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {/* Header */}
           <div style={{ padding: "14px 18px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, display: "flex", alignItems: "center", justifyContent: "center", color: C.white }}>{I.zap}</div>
-              <div><div style={{ fontSize: 14, fontWeight: 700, color: C.white }}>CR Assistant</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>AI-powered · All modules</div></div>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: C.white }}>CR Assistant</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>Can read & write your CRM</div></div>
             </div>
-            <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 8px", borderRadius: 5, fontSize: 16 }}>×</button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setMessages([])} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", padding: "4px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>Clear</button>
+              <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 8px", borderRadius: 5, fontSize: 16 }}>×</button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -4064,11 +4185,11 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
             {messages.length === 0 && (
               <div style={{ textAlign: "center", paddingTop: 20 }}>
                 <div style={{ fontSize: 32, opacity: 0.15, marginBottom: 12 }}>⚡</div>
-                <p style={{ fontSize: 14, fontWeight: 600, color: C.navy, margin: "0 0 4px" }}>What can I help with?</p>
-                <p style={{ fontSize: 12, color: C.gray400, margin: "0 0 20px" }}>I have access to your full CRM — leads, tickets, companies, and more.</p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: C.navy, margin: "0 0 4px" }}>What can I do for you?</p>
+                <p style={{ fontSize: 12, color: C.gray400, margin: "0 0 20px" }}>I can create leads, open tickets, update records, draft emails, and answer questions.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
                   {suggestions.map(s => (
-                    <button key={s} onClick={() => { setInput(s); inputRef.current?.focus(); }} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${C.gray200}`, background: C.gray50, color: C.gray600, fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all 0.15s" }}
+                    <button key={s} onClick={() => { setInput(s); inputRef.current?.focus(); }} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${C.gray200}`, background: C.gray50, color: C.gray600, fontSize: 11, fontWeight: 500, cursor: "pointer" }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = C.red + "60"; e.currentTarget.style.color = C.red; }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.color = C.gray600; }}>
                       {s}
@@ -4077,7 +4198,7 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
                 </div>
               </div>
             )}
-            {messages.map((m, i) => (
+            {messages.filter(m => !m.toolUse && !m.toolResult).map((m, i) => (
               <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
                 <div style={{
                   maxWidth: "85%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
@@ -4093,7 +4214,7 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
               <div style={{ display: "flex", justifyContent: "flex-start" }}>
                 <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: C.gray50, display: "flex", alignItems: "center", gap: 8 }}>
                   <Spinner size={12} color={C.gray400} />
-                  <span style={{ fontSize: 12, color: C.gray400 }}>Thinking...</span>
+                  <span style={{ fontSize: 12, color: C.gray400 }}>Working...</span>
                 </div>
               </div>
             )}
@@ -4103,7 +4224,7 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
           {/* Input */}
           <div style={{ padding: "12px 14px", borderTop: `1px solid ${C.gray200}`, display: "flex", gap: 8, flexShrink: 0, background: C.white }}>
             <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder="Ask anything about your CRM..." style={{ flex: 1, padding: "10px 14px", border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, color: C.navy, outline: "none", background: C.gray50 }} />
+              placeholder="Ask or tell me what to do..." style={{ flex: 1, padding: "10px 14px", border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, color: C.navy, outline: "none", background: C.gray50 }} />
             <button onClick={handleSend} disabled={!input.trim() || processing} style={{
               padding: "10px 16px", borderRadius: 10, border: "none", flexShrink: 0,
               background: input.trim() && !processing ? `linear-gradient(135deg, ${C.red}, ${C.redDark})` : C.gray200,
@@ -4116,6 +4237,7 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
         </div>
       );
     }
+
 
     // ============================================================
     // MAIN APP SHELL
@@ -4137,9 +4259,16 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
       const contactsRef = useRef(contactsData); contactsRef.current = contactsData;
       const setContacts = useCallback(u => { const n = typeof u === "function" ? u(contactsRef.current) : u; saveContacts(n); }, [saveContacts]);
 
-      // Sales + Service data (needed for Directory + Reports cross-referencing)
-      const [salesLeads] = useFirestoreCollection("cr_sales_leads", []);
-      const [serviceTickets] = useFirestoreCollection("cr_service_tickets", []);
+      // Sales + Service data (needed for Directory + Reports + AI Agent cross-referencing)
+      const [salesLeadsData, saveSalesLeads] = useFirestoreCollection("cr_sales_leads", []);
+      const salesLeadsRef = useRef(salesLeadsData); salesLeadsRef.current = salesLeadsData;
+      const setSalesLeads = useCallback(u => { const n = typeof u === "function" ? u(salesLeadsRef.current) : u; saveSalesLeads(n); }, [saveSalesLeads]);
+      const salesLeads = salesLeadsData;
+
+      const [serviceTicketsData, saveServiceTickets] = useFirestoreCollection("cr_service_tickets", []);
+      const serviceTicketsRef = useRef(serviceTicketsData); serviceTicketsRef.current = serviceTicketsData;
+      const setServiceTickets = useCallback(u => { const n = typeof u === "function" ? u(serviceTicketsRef.current) : u; saveServiceTickets(n); }, [saveServiceTickets]);
+      const serviceTickets = serviceTicketsData;
 
       const sharedEntities = { companies: companiesData, properties: propertiesData, contacts: contactsData, setCompanies, setProperties, setContacts };
 
@@ -4189,7 +4318,7 @@ You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tic
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
 
           {/* Platform-wide AI Agent */}
-          <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} currentModule={currentModule} />
+          <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} currentModule={currentModule} />
         </div>
       );
     }
