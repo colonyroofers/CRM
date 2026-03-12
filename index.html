@@ -103,7 +103,7 @@
 
     // ─── ROLE SYSTEM ───────────────────────────────────────────
     const ROLES = {
-      admin: { label: "Admin", modules: ["directory", "sales", "estimating", "production", "catalog", "service", "accounting", "reports"], color: "#E63946" },
+      admin: { label: "Admin", modules: ["directory", "sales", "estimating", "production", "catalog", "service", "finance", "reports"], color: "#E63946" },
       estimator: { label: "Estimator", modules: ["directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
       coordinator: { label: "Coordinator", modules: ["directory", "sales", "production", "service", "reports"], color: "#10B981" },
       superintendent: { label: "Superintendent", modules: ["directory", "production", "service"], color: "#F59E0B" },
@@ -3851,11 +3851,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     // MODULE: ACCOUNTING (Placeholder)
     // ============================================================
-    function AccountingModule({ user, role }) {
+    function FinanceModule({ user, role }) {
       return (
         <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
-            <div style={{ marginBottom: 24 }}><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Accounting</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Job costing, invoicing & financial tracking</p></div>
+            <div style={{ marginBottom: 24 }}><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Finance</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Job costing, invoicing & financial tracking</p></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
               <StatCard label="Revenue" value="—" icon={I.dollar} accent={C.green} />
               <StatCard label="Expenses" value="—" icon={I.barChart} accent={C.red} />
@@ -3864,7 +3864,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             </div>
             <div style={{ padding: "60px 40px", textAlign: "center", background: C.white, borderRadius: 12, border: `2px dashed ${C.gray300}` }}>
               <div style={{ fontSize: 48, opacity: 0.15, marginBottom: 16 }}>💰</div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Accounting Module — Coming Soon</h2>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Finance Module — Coming Soon</h2>
               <p style={{ fontSize: 14, color: C.gray500, margin: "0 0 24px", maxWidth: 500, marginLeft: "auto", marginRight: "auto", lineHeight: 1.6 }}>Job costing linked to production projects, expense tracking from Sage/Ramp, invoicing, AP/AR, and margin reporting — all connected to your client database.</p>
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                 {["Job Cost Tracking", "Invoice Generation", "AP / AR", "Sage Integration", "Ramp Sync", "Margin Reports"].map(f => (
@@ -3958,6 +3958,166 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
+    // AI AGENT (Platform-wide floating assistant)
+    // ============================================================
+    function AIAgent({ user, role, entities, salesLeads, serviceTickets, currentModule }) {
+      const { companies, properties, contacts } = entities;
+      const [open, setOpen] = useState(false);
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState("");
+      const [processing, setProcessing] = useState(false);
+      const chatEndRef = useRef(null);
+      const inputRef = useRef(null);
+
+      useEffect(() => { if (open) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); inputRef.current?.focus(); } }, [open, messages]);
+
+      const buildContext = () => {
+        const leads = salesLeads || [];
+        const tickets = serviceTickets || [];
+        const openLeads = leads.filter(l => !["closed_won", "closed_lost"].includes(l.stage));
+        const wonLeads = leads.filter(l => l.stage === "closed_won");
+        const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status));
+        const emergencyTickets = tickets.filter(t => t.priority === "Emergency" && !["Complete", "Closed"].includes(t.status));
+
+        return `You are the AI assistant for Colony Roofers CRM. You help with all aspects of the business — sales, service, estimating, production, finance, and client management. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. They are currently viewing the ${currentModule} module.
+
+CURRENT CRM DATA SNAPSHOT:
+- Companies (${companies.length}): ${companies.slice(0, 20).map(c => `${c.name} [${c.market || "—"}]`).join(", ")}${companies.length > 20 ? ` ...+${companies.length - 20} more` : ""}
+- Properties (${properties.length}): ${properties.slice(0, 15).map(p => `${p.name} (${companies.find(c => c.id === p.companyId)?.name || "—"})`).join(", ")}${properties.length > 15 ? ` ...+${properties.length - 15} more` : ""}
+- Contacts (${contacts.length}): ${contacts.slice(0, 15).map(c => `${c.name} — ${c.email || "no email"} (${companies.find(co => co.id === c.companyId)?.name || "—"})`).join(", ")}${contacts.length > 15 ? ` ...+${contacts.length - 15} more` : ""}
+- Sales Leads (${leads.length} total, ${openLeads.length} open, ${wonLeads.length} won): Pipeline value $${openLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0).toLocaleString()}. Won value $${wonLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0).toLocaleString()}.
+${leads.slice(0, 15).map(l => `  • ${companies.find(c => c.id === l.companyId)?.name || l.company || "—"} | ${l.stage} | $${(l.estimatedValue || 0).toLocaleString()} | ${l.source || "—"}`).join("\n")}${leads.length > 15 ? `\n  ...+${leads.length - 15} more leads` : ""}
+- Service Tickets (${tickets.length} total, ${openTickets.length} open, ${emergencyTickets.length} emergencies):
+${tickets.slice(0, 15).map(t => `  • ${t.subject} | ${companies.find(c => c.id === t.companyId)?.name || "—"} | ${t.status} | ${t.priority} | ${t.type}`).join("\n")}${tickets.length > 15 ? `\n  ...+${tickets.length - 15} more tickets` : ""}
+
+MARKETS: Atlanta (ATL), Tampa (TPA), Dallas (DFW)
+TEAM: Zach (Owner/Admin), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
+
+You can help with: analyzing CRM data, drafting emails, summarizing pipeline/tickets, identifying trends, recommending next actions, answering questions about any entity, preparing meeting briefs, suggesting follow-ups, and any other business task. Keep responses concise and actionable.`;
+      };
+
+      const handleSend = async () => {
+        const text = input.trim();
+        if (!text || processing) return;
+        setInput("");
+        const userMsg = { role: "user", text };
+        setMessages(prev => [...prev, userMsg]);
+        setProcessing(true);
+
+        try {
+          const history = [...messages, userMsg].slice(-10).map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+          const response = await fetch("/api/ai", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: buildContext(), messages: history }),
+          });
+          if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || "API error " + response.status); }
+          const result = await response.json();
+          const reply = result.content?.find(c => c.type === "text")?.text || "No response.";
+          setMessages(prev => [...prev, { role: "assistant", text: reply }]);
+        } catch (err) {
+          setMessages(prev => [...prev, { role: "assistant", text: "Error: " + (err.message || "Something went wrong"), error: true }]);
+        } finally { setProcessing(false); }
+      };
+
+      const suggestions = [
+        "Summarize my pipeline",
+        "Any emergency tickets?",
+        "Draft a follow-up email",
+        "Which leads need attention?",
+        "Show me this week's activity",
+        "Top companies by revenue",
+      ];
+
+      // Floating button
+      if (!open) {
+        return (
+          <button onClick={() => setOpen(true)} style={{
+            position: "fixed", bottom: 24, right: 24, zIndex: 9000,
+            width: 56, height: 56, borderRadius: 28, border: "none",
+            background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`,
+            color: C.white, fontSize: 24, cursor: "pointer",
+            boxShadow: `0 6px 24px ${C.red}40, 0 2px 8px rgba(0,0,0,0.2)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "transform 0.2s, box-shadow 0.2s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = `0 8px 32px ${C.red}50, 0 4px 12px rgba(0,0,0,0.25)`; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = `0 6px 24px ${C.red}40, 0 2px 8px rgba(0,0,0,0.2)`; }}>
+            {I.zap}
+          </button>
+        );
+      }
+
+      // Chat panel
+      return (
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 9000, width: 420, maxWidth: "calc(100vw - 48px)", height: 560, maxHeight: "calc(100vh - 100px)", borderRadius: 16, background: C.white, boxShadow: "0 20px 60px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ padding: "14px 18px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, display: "flex", alignItems: "center", justifyContent: "center", color: C.white }}>{I.zap}</div>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: C.white }}>CR Assistant</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>AI-powered · All modules</div></div>
+            </div>
+            <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 8px", borderRadius: 5, fontSize: 16 }}>×</button>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+            {messages.length === 0 && (
+              <div style={{ textAlign: "center", paddingTop: 20 }}>
+                <div style={{ fontSize: 32, opacity: 0.15, marginBottom: 12 }}>⚡</div>
+                <p style={{ fontSize: 14, fontWeight: 600, color: C.navy, margin: "0 0 4px" }}>What can I help with?</p>
+                <p style={{ fontSize: 12, color: C.gray400, margin: "0 0 20px" }}>I have access to your full CRM — leads, tickets, companies, and more.</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                  {suggestions.map(s => (
+                    <button key={s} onClick={() => { setInput(s); inputRef.current?.focus(); }} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${C.gray200}`, background: C.gray50, color: C.gray600, fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all 0.15s" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = C.red + "60"; e.currentTarget.style.color = C.red; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.color = C.gray600; }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div style={{
+                  maxWidth: "85%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                  background: m.role === "user" ? `linear-gradient(135deg, ${C.navy}, ${C.navyLight})` : m.error ? C.redBg : C.gray50,
+                  color: m.role === "user" ? C.white : m.error ? C.red : C.navy,
+                  fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                }}>
+                  {m.text}
+                </div>
+              </div>
+            ))}
+            {processing && (
+              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: C.gray50, display: "flex", alignItems: "center", gap: 8 }}>
+                  <Spinner size={12} color={C.gray400} />
+                  <span style={{ fontSize: 12, color: C.gray400 }}>Thinking...</span>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ padding: "12px 14px", borderTop: `1px solid ${C.gray200}`, display: "flex", gap: 8, flexShrink: 0, background: C.white }}>
+            <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder="Ask anything about your CRM..." style={{ flex: 1, padding: "10px 14px", border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, color: C.navy, outline: "none", background: C.gray50 }} />
+            <button onClick={handleSend} disabled={!input.trim() || processing} style={{
+              padding: "10px 16px", borderRadius: 10, border: "none", flexShrink: 0,
+              background: input.trim() && !processing ? `linear-gradient(135deg, ${C.red}, ${C.redDark})` : C.gray200,
+              color: input.trim() && !processing ? C.white : C.gray400,
+              fontSize: 12, fontWeight: 600, cursor: input.trim() && !processing ? "pointer" : "default",
+            }}>
+              Send
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
     // MAIN APP SHELL
     // ============================================================
     function App() {
@@ -3997,7 +4157,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { key: "production", label: "Production", icon: "🏗️" },
         { key: "catalog", label: "Catalog", icon: "📦" },
         { key: "service", label: "Service", icon: "🔧" },
-        { key: "accounting", label: "Accounting", icon: "💰" },
+        { key: "finance", label: "Finance", icon: "💰" },
         { key: "reports", label: "Reports", icon: "📊" },
       ].filter(m => allowedModules.includes(m.key));
 
@@ -4024,9 +4184,12 @@ Extract every identifiable expense. Use the most specific category possible. If 
           {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
-          {currentModule === "accounting" && <AccountingModule user={user} role={role} />}
+          {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
+
+          {/* Platform-wide AI Agent */}
+          <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} currentModule={currentModule} />
         </div>
       );
     }
