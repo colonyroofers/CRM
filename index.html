@@ -3555,7 +3555,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Project Sales</h1>
                 <p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Jobs linked to your client database</p>
               </div>
-              <button onClick={() => alert("New jobs are created from the Directory module. Go to Directory → select a company or property → Create Job.")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: C.white, color: C.gray500, border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📇 Create jobs from Directory</button>
+              <button onClick={() => alert("New projects are created from the Directory module. Go to Directory → select a company, property, or contact → New Project.")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: C.white, color: C.gray500, border: `1px solid ${C.gray300}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📇 Create from Directory</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
               <StatCard label="Open Leads" value={openLeads} icon={I.user} accent={C.blue} />
@@ -3741,13 +3741,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     const COMPANY_TYPES = ["Property Manager", "HOA / Condo", "Owner / Investor", "General Contractor", "Government", "Non-Profit", "Other"];
 
-    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads }) {
+    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets }) {
       const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [tab, setTab] = useState("companies");
       const [search, setSearch] = useState("");
       const [showCreate, setShowCreate] = useState(null);
       const [selected, setSelected] = useState(null);
       const [showCreateLead, setShowCreateLead] = useState(null); // { companyId, propertyId, contactId }
+      const [showCreateTicket, setShowCreateTicket] = useState(null); // { companyId, propertyId, contactId }
 
       const s = search.toLowerCase();
       const filteredCo = companies.filter(c => !s || c.name?.toLowerCase().includes(s));
@@ -3774,6 +3775,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const newLead = { ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Lead created from Directory", by: user.name, at: new Date().toISOString() }] };
         setSalesLeads(prev => [newLead, ...prev]);
         setShowCreateLead(null);
+      };
+      const handleCreateTicket = (ticket) => {
+        const newTicket = { ...ticket, id: generateId(), status: "New", createdAt: new Date().toISOString(), createdBy: user.name, activities: [{ type: "created", text: "Ticket created from Directory", by: user.name, at: new Date().toISOString() }] };
+        setServiceTickets(prev => [newTicket, ...prev]);
+        setShowCreateTicket(null);
       };
 
       const EntityRow = ({ icon, name, sub, leadCount, ticketCount, onClick }) => (
@@ -3829,9 +3835,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {relContacts.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Contacts ({relContacts.length})</h4>
                   {relContacts.map(c => <div key={c.id} onClick={() => setSelected({ type: "contact", id: c.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>👤 {c.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{c.email} · {c.phone}</div></div>)}
                 </div>}
-                {/* Create Job button */}
+                {/* Create Project or Ticket */}
                 <div style={{ marginBottom: 24 }}>
-                  <button onClick={() => { setSelected(null); setShowCreateLead({ companyId: type === "company" ? id : entity.companyId || "", propertyId: type === "property" ? id : "", contactId: type === "contact" ? id : "" }); }} style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 4px 12px ${C.red}30` }}>{I.plus} Create Job for {entity.name}</button>
+                  <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px" }}>Create New</h4>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button onClick={() => { setSelected(null); setShowCreateLead({ companyId: type === "company" ? id : entity.companyId || "", propertyId: type === "property" ? id : "", contactId: type === "contact" ? id : "" }); }} style={{ flex: 1, padding: "14px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 4px 12px ${C.navy}30` }}>💼 New Project</button>
+                    <button onClick={() => { setSelected(null); setShowCreateTicket({ companyId: type === "company" ? id : entity.companyId || "", propertyId: type === "property" ? id : "", contactId: type === "contact" ? id : "" }); }} style={{ flex: 1, padding: "14px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 4px 12px ${C.red}30` }}>🔧 New Service Ticket</button>
+                  </div>
                 </div>
                 {/* Sales History */}
                 <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Sales History ({leads.length})</h4>
@@ -3885,6 +3895,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           </div>
           {showCreate && <CreateEntityModal type={showCreate} companies={companies} contacts={contacts} onClose={() => setShowCreate(null)} onCreate={handleCreate} />}
           {showCreateLead && <CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} />}
+          {showCreateTicket && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} />}
           <EntityDetail />
         </div>
       );
@@ -4085,8 +4096,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
-    function CreateTicketModal({ companies, properties, contacts, onClose, onCreate, onCreateEntity }) {
-      const [form, setForm] = useState({ subject: "", type: "Leak / Repair", priority: "Medium", market: "ATL", companyId: "", propertyId: "", contactId: "", description: "", assignedTo: "" });
+    function CreateTicketModal({ companies, properties, contacts, onClose, onCreate, onCreateEntity, prefill }) {
+      const [form, setForm] = useState({ subject: "", type: "Leak / Repair", priority: "Medium", market: "ATL", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", description: "", assignedTo: "" });
       const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
@@ -4965,7 +4976,7 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
           {currentModule === "production" && <ProductionModule user={user} role={role} />}
           {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
-          {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} />}
+          {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} />}
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
