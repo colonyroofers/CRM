@@ -137,7 +137,7 @@
       return isOnline;
     }
 
-    function daysBetween(d1, d2) {
+    function daysBetweenDates(d1, d2) {
       return Math.floor((new Date(d2) - new Date(d1)) / 86400000);
     }
 
@@ -156,7 +156,7 @@
           // 1. Bid due in 48 hours
           salesLeads.forEach(lead => {
             if (lead.status === "being_estimated" && lead.bidDueDate) {
-              const daysUntilDue = daysBetween(now, lead.bidDueDate);
+              const daysUntilDue = daysBetweenDates(now, lead.bidDueDate);
               if (daysUntilDue >= 0 && daysUntilDue <= 2) {
                 const key = `bid_due_${lead.id}`;
                 if (!seen[key]) {
@@ -179,7 +179,7 @@
           // 2. Stale lead (new_lead or contacted with 3+ days no activity)
           salesLeads.forEach(lead => {
             if ((lead.status === "new_lead" || lead.status === "contacted") && lead.createdAt) {
-              const daysSinceActivity = daysBetween(lead.lastActivityAt || lead.createdAt, now);
+              const daysSinceActivity = daysBetweenDates(lead.lastActivityAt || lead.createdAt, now);
               if (daysSinceActivity >= 3) {
                 const key = `stale_lead_${lead.id}`;
                 if (!seen[key]) {
@@ -202,7 +202,7 @@
           // 3. Follow-up needed (proposal_sent with 3+ days no activity)
           salesLeads.forEach(lead => {
             if (lead.status === "proposal_sent" && lead.createdAt) {
-              const daysSinceActivity = daysBetween(lead.lastActivityAt || lead.createdAt, now);
+              const daysSinceActivity = daysBetweenDates(lead.lastActivityAt || lead.createdAt, now);
               if (daysSinceActivity >= 3) {
                 const key = `followup_${lead.id}`;
                 if (!seen[key]) {
