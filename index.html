@@ -3240,7 +3240,7 @@
                 {chatHistory.length > 0 && (
                   <div style={{ maxHeight: 220, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8, background: C.gray50 }}>
                     {chatHistory.map((msg, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                      <div key={msg.role + '_' + i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
                         <div style={{
                           maxWidth: "85%", padding: "8px 12px", borderRadius: msg.role === "user" ? "10px 10px 2px 10px" : "10px 10px 10px 2px",
                           background: msg.role === "user" ? C.navy : msg.error ? C.redBg : C.greenBg,
@@ -3469,7 +3469,7 @@ Include all materials needed: primary roofing material, underlayment, insulation
                     </tr>
                   </thead>
                   <tbody>
-                    {materials.map((m, i) => <MaterialLineItem key={i} item={m} idx={i} onUpdate={handleUpdate} onRemove={handleRemove} />)}
+                    {materials.map((m, i) => <MaterialLineItem key={m.id || ('mat_' + i)} item={m} idx={i} onUpdate={handleUpdate} onRemove={handleRemove} />)}
                   </tbody>
                   <tfoot>
                     <tr style={{ background: C.gray50 }}>
@@ -6639,7 +6639,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                     </div>
                   )}
                 </div>
-                {(lead.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", stage_change: "📋", note: "📝", action: "🎯" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
+                {(lead.activities || []).slice().reverse().map((a, i) => <div key={a.at + '_' + i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", stage_change: "📋", note: "📝", action: "🎯" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
               </div>)}
               {activeTab === "actions" && (<div style={{ display: "grid", gap: 14 }}>
                 <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Suggested Next Actions</h4>
@@ -6919,7 +6919,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   </div>
                   {vl.scopeOfWork && <div style={{ padding: "10px 12px", borderRadius: 6, background: C.blueBg, border: `1px solid ${C.blue}30`, marginBottom: 16 }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Scope of Work</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{vl.scopeOfWork}</div></div>}
                   <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Activity Log</h4>
-                  {(vl.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
+                  {(vl.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={a.at + '_' + i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
                   {(!vl.activities || vl.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
                 </div>
               </div>
@@ -6944,7 +6944,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ padding: "16px 24px" }}>
                   {vt.description && <div style={{ padding: "10px 12px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}`, marginBottom: 16, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{vt.description}</div>}
                   <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Activity Log</h4>
-                  {(vt.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
+                  {(vt.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={a.at + '_' + i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
                   {(!vt.activities || vt.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
                 </div>
               </div>
@@ -8092,7 +8092,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                     </div>
                   )}
                 </div>
-                {(ticket.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", status: "📋", note: "📝", email: "📧" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
+                {(ticket.activities || []).slice().reverse().map((a, i) => <div key={a.at + '_' + i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", status: "📋", note: "📝", email: "📧" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
               </div>}
               {activeTab === "email" && <div>
                 <div style={{ marginBottom: 20 }}>
