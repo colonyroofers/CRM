@@ -37,6 +37,9 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
+    // Portal component - renders children at document.body level to avoid stacking context issues
+    const Portal = ({ children }) => ReactDOM.createPortal(children, document.body);
+
     // ============================================================
     // COLONY ROOFERS — UNIFIED CRM
     // Modules: Estimating | Production | Sales | Product Catalog
@@ -1321,7 +1324,7 @@
                           const ests = estimatesForLead(job.id);
                           const approved = approvedForLead(job.id);
                           return (
-                            <div key={job.id} draggable onDragStart={e => handleKanbanDragStart(e, job.id)} onClick={() => setSelectedKanbanJob(job)} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${draggedJobId === job.id ? C.blue : C.gray200}`, background: draggedJobId === job.id ? C.blueBg : C.white, cursor: "grab", opacity: draggedJobId === job.id ? 0.6 : 1 }}>
+                            <div key={job.id} draggable onDragStart={e => handleKanbanDragStart(e, job.id)} onClick={() => setSelectedKanbanJob(job)} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${draggedJobId === job.id ? C.blue : C.gray200}`, background: draggedJobId === job.id ? C.blueBg : C.white, cursor: "pointer", opacity: draggedJobId === job.id ? 0.6 : 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 2 }}>{job.jobName || co?.name || job.company || "—"}</div>
                               {co && job.jobName && <div style={{ fontSize: 11, color: C.gray500, marginBottom: 2 }}>🏢 {co.name}</div>}
                               <div style={{ fontSize: 11, color: C.gray500, marginBottom: 6 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
@@ -4369,7 +4372,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleProjectUpdate = (updates) => { onUpdateProject(project.id, updates); };
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: C.gray50, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", flexDirection: "column" }}>
           {/* Full-width header */}
           <div style={{ padding: "16px 32px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, flexShrink: 0 }}>
             <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -6412,8 +6415,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       };
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={onClose}>
-          <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto" }} onClick={onClose}>
+          <div style={{ width: "100%", maxWidth: 800, background: C.white, margin: "40px auto", borderRadius: 16, boxShadow: "0 25px 60px rgba(0,0,0,0.3)", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
@@ -6750,8 +6753,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const insStatus = type === "subcontractor" ? getInsuranceStatus(entity) : null;
 
         return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={() => setSelected(null)}>
-            <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto" }} onClick={() => setSelected(null)}>
+            <div style={{ width: "100%", maxWidth: 800, background: C.white, margin: "40px auto", borderRadius: 16, boxShadow: "0 25px 60px rgba(0,0,0,0.3)", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
               <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <button onClick={() => setSelected(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
@@ -6868,10 +6871,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {tab === "subs" && (filteredSb.length > 0 ? filteredSb.map(sb => <SubcontractorRow key={sb.id} sub={sb} onClick={() => setSelected({ type: "subcontractor", id: sb.id })} />) : <div style={{ padding: 32, textAlign: "center", color: C.gray400, fontSize: 12 }}>No subcontractors</div>)}
             </div>
           </div>
-          {showCreate && <CreateEntityModal type={showCreate} companies={companies} contacts={contacts} subcontractors={subcontractors} onClose={() => setShowCreate(null)} onCreate={handleCreate} />}
-          {showCreateLead && <CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} />}
-          {showCreateTicket && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} crmUsers={crmUsers} />}
-          <EntityDetail />
+          {showCreate && <Portal><CreateEntityModal type={showCreate} companies={companies} contacts={contacts} subcontractors={subcontractors} onClose={() => setShowCreate(null)} onCreate={handleCreate} /></Portal>}
+          {showCreateLead && <Portal><CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} /></Portal>}
+          {showCreateTicket && <Portal><CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} crmUsers={crmUsers} /></Portal>}
+          <Portal><EntityDetail /></Portal>
           {/* Lead detail overlay from directory */}
           {viewingLead && (() => {
             const vl = salesLeads.find(l => l.id === viewingLead.id) || viewingLead;
@@ -6880,7 +6883,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             const vlPr = properties.find(p => p.id === vl.propertyId);
             const vlCt = contacts.find(c => c.id === vl.contactId);
             return (
-            <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingLead(null)}>
+            <Portal><div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingLead(null)}>
               <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
                 <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, borderRadius: "16px 16px 0 0" }}>
                   <button onClick={() => setViewingLead(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>← Back</button>
@@ -6905,14 +6908,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   {(!vl.activities || vl.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
                 </div>
               </div>
-            </div>);
+            </div></Portal>);
           })()}
           {/* Ticket detail overlay from directory */}
           {viewingTicket && (() => {
             const vt = serviceTickets.find(t => t.id === viewingTicket.id) || viewingTicket;
             const vtCo = companies.find(c => c.id === vt.companyId);
             return (
-            <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingTicket(null)}>
+            <Portal><div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingTicket(null)}>
               <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
                 <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, borderRadius: "16px 16px 0 0" }}>
                   <button onClick={() => setViewingTicket(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>← Back</button>
@@ -6930,7 +6933,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   {(!vt.activities || vt.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
                 </div>
               </div>
-            </div>);
+            </div></Portal>);
           })()}
         </div>
       );
@@ -7292,7 +7295,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       };
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: C.gray50, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", flexDirection: "column" }}>
           <div style={{ background: C.navy, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 52 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <button onClick={onClose} style={{ background: "none", border: "none", color: C.white, fontSize: 18, cursor: "pointer" }}>←</button>
@@ -7941,7 +7944,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       };
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", flexDirection: "column" }}>
           {/* Full-width header */}
           <div style={{ padding: "16px 32px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, flexShrink: 0 }}>
             <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -9760,8 +9763,8 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
         const [form, setForm] = useState({ ...u, modules: u.modules || ROLE_PRESETS[u.role]?.modules || ALL_MODULES });
 
         return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={() => setEditUser(null)}>
-            <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto" }} onClick={() => setEditUser(null)}>
+            <div style={{ width: "100%", maxWidth: 800, background: C.white, margin: "40px auto", borderRadius: 16, boxShadow: "0 25px 60px rgba(0,0,0,0.3)", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
               <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <button onClick={() => setEditUser(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
@@ -10422,7 +10425,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
             </div>
 
             {/* Module Content */}
-            <div style={{ flex: 1, overflow: "auto" }}>
+            <div style={{ flex: 1, minHeight: 0 }}>
               {settingsView === "profile" && (
                 <div style={{ maxWidth: 700, margin: "0 auto", padding: "32px" }}>
                   <button onClick={() => setSettingsView(null)} style={{ background: C.gray100, border: "none", cursor: "pointer", color: C.navy, padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>← Back to CRM</button>
