@@ -4922,8 +4922,8 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const userModules = crmUser?.modules || ROLE_PRESETS[role]?.modules || ALL_MODULES;
       const isAdmin = role === "admin";
 
-      // Admin always gets user management
-      const allowedModules = isAdmin ? [...new Set([...userModules, "users"])] : userModules;
+      // Admin always has full access
+      const allowedModules = userModules;
       const currentModule = activeModule && allowedModules.includes(activeModule) ? activeModule : allowedModules[0] || "directory";
 
       // Check if user is active
@@ -4949,10 +4949,100 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
         { key: "service", label: "Service", icon: "🔧" },
         { key: "finance", label: "Finance", icon: "💰" },
         { key: "reports", label: "Reports", icon: "📊" },
-        { key: "users", label: "Users", icon: "👥" },
       ].filter(m => allowedModules.includes(m.key));
 
       const roleColor = ROLE_COLORS[role] || C.gray500;
+      const [showMenu, setShowMenu] = useState(false);
+      const [settingsView, setSettingsView] = useState(null); // "profile" | "users"
+      const menuRef = useRef(null);
+
+      // Close menu on outside click
+      useEffect(() => {
+        const handle = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false); };
+        if (showMenu) document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+      }, [showMenu]);
+
+      // If a settings view is active, show it instead of a module
+      if (settingsView === "profile") {
+        return (
+          <div style={{ minHeight: "100vh", background: C.gray50 }}>
+            <div style={{ background: C.navy, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div style={{ color: C.white, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: C.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.white }}>CR</div>
+                  <div><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
+                </div>
+              </div>
+              <button onClick={() => setSettingsView(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>← Back to CRM</button>
+            </div>
+            <div style={{ maxWidth: 700, margin: "0 auto", padding: "32px" }}>
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: "0 0 8px" }}>My Profile</h1>
+              <p style={{ fontSize: 14, color: C.gray500, margin: "0 0 28px" }}>Your account details and CRM permissions</p>
+
+              {/* Profile card */}
+              <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.gray200}`, overflow: "hidden", marginBottom: 24 }}>
+                <div style={{ padding: "24px 28px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, display: "flex", alignItems: "center", gap: 16 }}>
+                  {user.picture ? <img src={user.picture} alt="" style={{ width: 56, height: 56, borderRadius: 16, border: "3px solid rgba(255,255,255,0.3)" }} referrerPolicy="no-referrer" /> : <div style={{ width: 56, height: 56, borderRadius: 16, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 700 }}>{(user.name || "?")[0]}</div>}
+                  <div>
+                    <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{user.name}</h2>
+                    <p style={{ fontSize: 13, opacity: 0.7, margin: "2px 0 0" }}>{user.email}</p>
+                  </div>
+                </div>
+                <div style={{ padding: "20px 28px" }}>
+                  {[
+                    ["Role", ROLE_PRESETS[role]?.label || role],
+                    ["Team", crmUser?.team || "—"],
+                    ["Markets", (crmUser?.markets || MARKETS).map(m => MARKET_LABELS[m]).join(", ")],
+                    ["Visibility", { all: "All data", team: "Team only", assigned: "Assigned only" }[crmUser?.visibility] || "All data"],
+                    ["Modules", (crmUser?.modules || allowedModules).map(m => MODULE_LABELS[m]).join(", ")],
+                    ["Member Since", crmUser?.createdAt ? new Date(crmUser.createdAt).toLocaleDateString() : "—"],
+                  ].map(([l, v]) => (
+                    <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}>
+                      <span style={{ fontSize: 13, color: C.gray500 }}>{l}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.navy, textAlign: "right", maxWidth: "60%" }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Module access visual */}
+              <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.gray200}`, padding: "20px 28px" }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 14px" }}>Your Module Access</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {ALL_MODULES.map(m => {
+                    const hasAccess = (crmUser?.modules || allowedModules).includes(m);
+                    return (
+                      <div key={m} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, background: hasAccess ? C.greenBg + "40" : C.gray50, border: `1px solid ${hasAccess ? C.green + "40" : C.gray200}` }}>
+                        <span style={{ fontSize: 16 }}>{MODULE_ICONS[m]}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: hasAccess ? C.navy : C.gray400 }}>{MODULE_LABELS[m]}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: hasAccess ? C.green : C.gray400 }}>{hasAccess ? "✓" : "—"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (settingsView === "users" && isAdmin) {
+        return (
+          <div style={{ minHeight: "100vh", background: C.gray50 }}>
+            <div style={{ background: C.navy, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div style={{ color: C.white, display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: C.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.white }}>CR</div>
+                  <div><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
+                </div>
+              </div>
+              <button onClick={() => setSettingsView(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>← Back to CRM</button>
+            </div>
+            <UserManagementModule user={user} role={role} crmUsers={crmUsers} setCrmUsers={setCrmUsers} />
+          </div>
+        );
+      }
 
       return (
         <div style={{ minHeight: "100vh", background: C.gray50 }}>
@@ -4963,13 +5053,49 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
                 <div><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
               </div>
               <div style={{ display: "flex", gap: 2, marginLeft: 16, overflowX: "auto" }}>
-                {modules.map(m => <button key={m.key} onClick={() => setActiveModule(m.key)} style={{ padding: "8px 14px", border: "none", borderRadius: "6px 6px 0 0", background: currentModule === m.key ? "rgba(255,255,255,0.15)" : "transparent", color: currentModule === m.key ? C.white : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, borderBottom: currentModule === m.key ? `2px solid ${C.red}` : "2px solid transparent", whiteSpace: "nowrap" }}><span style={{ fontSize: 13 }}>{m.icon}</span> {m.label}</button>)}
+                {modules.map(m => <button key={m.key} onClick={() => { setActiveModule(m.key); setSettingsView(null); }} style={{ padding: "8px 14px", border: "none", borderRadius: "6px 6px 0 0", background: currentModule === m.key && !settingsView ? "rgba(255,255,255,0.15)" : "transparent", color: currentModule === m.key && !settingsView ? C.white : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, borderBottom: currentModule === m.key && !settingsView ? `2px solid ${C.red}` : "2px solid transparent", whiteSpace: "nowrap" }}><span style={{ fontSize: 13 }}>{m.icon}</span> {m.label}</button>)}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {/* Profile area with dropdown */}
+            <div ref={menuRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: roleColor + "30", color: roleColor, letterSpacing: "0.05em" }}>{ROLE_PRESETS[role]?.label || role}</span>
-              {user.picture ? <img src={user.picture} alt="" style={{ width: 28, height: 28, borderRadius: 14, border: "2px solid rgba(255,255,255,0.3)" }} referrerPolicy="no-referrer" /> : <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.white, fontWeight: 700 }}>{(user.name || "?")[0]}</div>}
-              <div style={{ color: C.white, lineHeight: 1.2 }}><div style={{ fontSize: 12, fontWeight: 600 }}>{user.name}</div><button onClick={signOut} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 10, cursor: "pointer", padding: 0 }}>Sign Out</button></div>
+              <div onClick={() => setShowMenu(!showMenu)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 8px", borderRadius: 8, background: showMenu ? "rgba(255,255,255,0.1)" : "transparent", transition: "background 0.15s" }}>
+                {user.picture ? <img src={user.picture} alt="" style={{ width: 32, height: 32, borderRadius: 10, border: "2px solid rgba(255,255,255,0.3)" }} referrerPolicy="no-referrer" /> : <div style={{ width: 32, height: 32, borderRadius: 10, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: C.white, fontWeight: 700 }}>{(user.name || "?")[0]}</div>}
+                <div style={{ color: C.white, lineHeight: 1.2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{user.name}</div>
+                  <div style={{ fontSize: 10, opacity: 0.4 }}>{crmUser?.team || "—"}</div>
+                </div>
+                <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 8, marginLeft: 2 }}>▼</span>
+              </div>
+
+              {/* Dropdown menu */}
+              {showMenu && (
+                <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 8, width: 220, background: C.white, borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05)", overflow: "hidden", zIndex: 9999 }}>
+                  {/* User info header */}
+                  <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.gray200}`, background: C.gray50 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{user.name}</div>
+                    <div style={{ fontSize: 11, color: C.gray400 }}>{user.email}</div>
+                  </div>
+                  {/* Menu items */}
+                  <div style={{ padding: "6px" }}>
+                    <button onClick={() => { setSettingsView("profile"); setShowMenu(false); }} style={{ width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderRadius: 8, fontSize: 13, color: C.navy, fontWeight: 500, textAlign: "left" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ fontSize: 16 }}>👤</span> My Profile
+                    </button>
+                    {isAdmin && (
+                      <button onClick={() => { setSettingsView("users"); setShowMenu(false); }} style={{ width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderRadius: 8, fontSize: 13, color: C.navy, fontWeight: 500, textAlign: "left" }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <span style={{ fontSize: 16 }}>👥</span> User Management
+                      </button>
+                    )}
+                    <div style={{ height: 1, background: C.gray200, margin: "4px 0" }} />
+                    <button onClick={() => { setShowMenu(false); signOut(); }} style={{ width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderRadius: 8, fontSize: 13, color: C.red, fontWeight: 500, textAlign: "left" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.redBg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ fontSize: 16 }}>🚪</span> Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           {currentModule === "estimating" && <EstimatingModule user={user} role={role} />}
@@ -4980,7 +5106,6 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
-          {currentModule === "users" && <UserManagementModule user={user} role={role} crmUsers={crmUsers} setCrmUsers={setCrmUsers} />}
 
           <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} currentModule={currentModule} />
         </div>
