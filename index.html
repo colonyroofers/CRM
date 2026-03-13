@@ -6441,7 +6441,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [showMentionSuggest, setShowMentionSuggest] = useState(false);
       const [mentionFilter, setMentionFilter] = useState("");
       const [editingInspection, setEditingInspection] = useState(null);
+      const [leadSubmissions, setLeadSubmissions] = useState([]);
       const currentStage = SALES_STAGES.find(s => s.id === lead.stage);
+
+      useEffect(() => {
+        if (firestoreDb) {
+          loadAllSubmissions().then(all => setLeadSubmissions(all.filter(s => s.leadId === lead.id)));
+        }
+      }, [lead.id]);
 
       const handleSaveInspection = (ins) => {
         if (setInspections) setInspections(prev => { const idx = prev.findIndex(i => i.id === ins.id); return idx >= 0 ? prev.map(i => i.id === ins.id ? ins : i) : [...prev, ins]; });
@@ -6518,7 +6525,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {SALES_STAGES.map(s => <button key={s.id} onClick={() => onStageChange(lead.id, s.id)} style={{ padding: "5px 10px", borderRadius: 5, border: lead.stage === s.id ? `2px solid ${s.color}` : `1px solid ${C.gray200}`, background: lead.stage === s.id ? s.color + "15" : C.white, color: lead.stage === s.id ? s.color : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s.label}</button>)}
             </div>
             <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}`, overflowX: "auto" }}>
-              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "sov", label: "SOV" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "lead" && i.entityId === lead.id).length})` }, { id: "tasks", label: "Tasks" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }, { id: "documents", label: `Docs (${(lead.documents || []).length})` }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
+              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: `Estimates (${leadSubmissions.length})` }, { id: "sov", label: "SOV" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "lead" && i.entityId === lead.id).length})` }, { id: "tasks", label: "Tasks" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }, { id: "documents", label: `Docs (${(lead.documents || []).length})` }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
             </div>
             <div style={{ padding: "20px 24px" }}>
               {activeTab === "details" && (
@@ -6598,7 +6605,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   </div>
                 </div>
                 {(() => {
-                  const subs = JSON.parse(localStorage.getItem("estimate_submissions") || "[]").filter(s => s.leadId === lead.id);
+                  const subs = leadSubmissions;
                   if (subs.length === 0) return <div style={{ padding: 32, textAlign: "center", background: C.gray50, borderRadius: 8 }}><div style={{ fontSize: 28, opacity: 0.2, marginBottom: 8 }}>📐</div><p style={{ fontSize: 12, color: C.gray400 }}>No estimates yet{lead.stage === "being_estimated" ? " — estimates will appear here once submitted" : ""}</p></div>;
                   return subs.map(s => (
                     <div key={s.id} style={{ padding: "14px 16px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.white }}>
