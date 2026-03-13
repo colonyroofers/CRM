@@ -3440,7 +3440,7 @@ Include all materials needed: primary roofing material, underlayment, insulation
         const content = [header, ...rows, footer].join("\n");
         const blob = new Blob([content], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement("a"); a.href = url; a.download = `Material_Order_${project.name.replace(/[^a-zA-Z0-9]/g, "_")}.txt`; a.click();
+        const a = document.createElement("a"); a.href = url; a.download = `Material_Order_${(project.name || "Export").replace(/[^a-zA-Z0-9]/g, "_")}.txt`; a.click();
         URL.revokeObjectURL(url);
       };
 
@@ -6292,7 +6292,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         firestoreDb.collection("cr_schedule_of_values").where("leadId", "==", leadId).limit(1).get().then(snap => {
           if (!snap.empty) { const doc = snap.docs[0]; const data = doc.data(); setExistingSov({ ...data, _docId: doc.id }); setSovItems(data.items || []); }
           setLoading(false);
-        }).catch(() => setLoading(false));
+        }).catch(err => { console.warn("SOV load error:", err.message); setLoading(false); });
       }, [leadId]);
 
       const addItem = () => {
