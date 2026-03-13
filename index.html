@@ -3778,7 +3778,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     const CONTACT_TYPES = ["B2C", "B2B"];
     const LEAD_SOURCES = ["ZoomInfo", "Referral", "Website", "Cold Outreach", "Repeat Client", "Property Manager", "Other"];
 
-    function SalesModule({ user, role, entities, crmUsers, onMention }) {
+    function SalesModule({ user, role, entities, crmUsers, onMention, inspections, setInspections }) {
       const { companies, properties, contacts, setCompanies } = entities;
       const [leadsData, saveLeads] = useFirestoreCollection("cr_sales_leads", []);
       const leadsRef = useRef(leadsData); leadsRef.current = leadsData;
@@ -3980,7 +3980,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               </div>
             </div>);
           })()}
-          {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} />}
+          {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} inspections={inspections || []} setInspections={setInspections} />}
         </div>
       );
     }
@@ -4073,7 +4073,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
-    function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user, crmUsers, onMention }) {
+    function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user, crmUsers, onMention, inspections, setInspections }) {
       const { companies, properties, contacts } = entities;
       const co = companies.find(c => c.id === lead.companyId);
       const pr = properties.find(p => p.id === lead.propertyId);
@@ -4085,7 +4085,16 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [showEmailForm, setShowEmailForm] = useState(false);
       const [showMentionSuggest, setShowMentionSuggest] = useState(false);
       const [mentionFilter, setMentionFilter] = useState("");
+      const [editingInspection, setEditingInspection] = useState(null);
       const currentStage = SALES_STAGES.find(s => s.id === lead.stage);
+
+      const handleSaveInspection = (ins) => {
+        if (setInspections) setInspections(prev => { const idx = prev.findIndex(i => i.id === ins.id); return idx >= 0 ? prev.map(i => i.id === ins.id ? ins : i) : [...prev, ins]; });
+        setEditingInspection(null);
+      };
+      const handleCreateInspection = () => {
+        setEditingInspection({ id: generateId(), entityType: "lead", entityId: lead.id, data: {}, status: "Draft", summary: "", createdAt: new Date().toISOString(), createdBy: user.name });
+      };
 
       const handleNoteChange = (val) => {
         setNewNote(val);
@@ -4154,7 +4163,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {SALES_STAGES.map(s => <button key={s.id} onClick={() => onStageChange(lead.id, s.id)} style={{ padding: "5px 10px", borderRadius: 5, border: lead.stage === s.id ? `2px solid ${s.color}` : `1px solid ${C.gray200}`, background: lead.stage === s.id ? s.color + "15" : C.white, color: lead.stage === s.id ? s.color : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s.label}</button>)}
             </div>
             <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}`, overflowX: "auto" }}>
-              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
+              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "lead" && i.entityId === lead.id).length})` }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
             </div>
             <div style={{ padding: "20px 24px" }}>
               {activeTab === "details" && (
@@ -4236,6 +4245,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
                     </div>
                   ));
                 })()}
+              </div>)}
+              {activeTab === "inspections" && (<div>
+                <InspectionsList inspections={inspections || []} entityType="lead" entityId={lead.id} onOpen={ins => setEditingInspection(ins)} onCreate={handleCreateInspection} />
+                {editingInspection && <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onClose={() => setEditingInspection(null)} user={user} />}
               </div>)}
               {activeTab === "activity" && (<div>
                 <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}>
@@ -4546,6 +4559,129 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
+    // MODULE: INSPECTIONS (accessible from projects & service tickets)
+    // ============================================================
+    const INSPECTION_SECTIONS = [
+      { id: "general", label: "General Info", fields: [
+        { id: "roof_type", label: "Roof Type", type: "select", options: ["TPO", "EPDM", "Modified Bitumen", "Built-Up", "Metal", "Shingle", "Tile", "Other"] },
+        { id: "roof_age", label: "Estimated Roof Age (years)", type: "number" },
+        { id: "total_sqft", label: "Total Square Footage", type: "number" },
+        { id: "access_method", label: "Access Method", type: "select", options: ["Ladder", "Interior Stairs", "Hatch", "Other"] },
+        { id: "weather", label: "Weather Conditions", type: "text" },
+      ]},
+      { id: "membrane", label: "Membrane / Surface", fields: [
+        { id: "membrane_condition", label: "Overall Condition", type: "rating" },
+        { id: "blisters", label: "Blisters/Bubbles", type: "check" },
+        { id: "punctures", label: "Punctures/Tears", type: "check" },
+        { id: "seam_issues", label: "Open Seams", type: "check" },
+        { id: "ponding", label: "Ponding Water", type: "check" },
+        { id: "membrane_notes", label: "Notes", type: "text" },
+      ]},
+      { id: "flashings", label: "Flashings & Penetrations", fields: [
+        { id: "flashing_condition", label: "Flashing Condition", type: "rating" },
+        { id: "pipe_boots", label: "Pipe Boots Intact", type: "check" },
+        { id: "curb_flashings", label: "Curb Flashings Secure", type: "check" },
+        { id: "wall_flashings", label: "Wall Flashings Secure", type: "check" },
+        { id: "caulking", label: "Caulking/Sealant Condition", type: "rating" },
+        { id: "flashing_notes", label: "Notes", type: "text" },
+      ]},
+      { id: "drainage", label: "Drainage", fields: [
+        { id: "drains_clear", label: "Drains Clear", type: "check" },
+        { id: "gutters", label: "Gutters/Scuppers Functional", type: "check" },
+        { id: "slope_adequate", label: "Slope Adequate", type: "check" },
+        { id: "drainage_notes", label: "Notes", type: "text" },
+      ]},
+      { id: "interior", label: "Interior Findings", fields: [
+        { id: "leaks_visible", label: "Active Leaks Visible", type: "check" },
+        { id: "staining", label: "Ceiling Staining", type: "check" },
+        { id: "insulation", label: "Insulation Condition", type: "rating" },
+        { id: "interior_notes", label: "Notes", type: "text" },
+      ]},
+    ];
+    const INSPECTION_STATUSES = ["Draft", "In Progress", "Complete"];
+
+    function InspectionForm({ inspection, onSave, onClose, user }) {
+      const [data, setData] = useState(inspection?.data || {});
+      const [status, setStatus] = useState(inspection?.status || "Draft");
+      const [summary, setSummary] = useState(inspection?.summary || "");
+      const [expandedSection, setExpandedSection] = useState("general");
+
+      const setField = (id, val) => setData(prev => ({ ...prev, [id]: val }));
+
+      const renderField = (f) => {
+        const val = data[f.id];
+        if (f.type === "text") return <input value={val || ""} onChange={e => setField(f.id, e.target.value)} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy }} />;
+        if (f.type === "number") return <input type="number" value={val || ""} onChange={e => setField(f.id, e.target.value)} style={{ width: 120, padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy }} />;
+        if (f.type === "select") return <select value={val || ""} onChange={e => setField(f.id, e.target.value)} style={{ padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy, background: C.white }}><option value="">Select...</option>{f.options.map(o => <option key={o} value={o}>{o}</option>)}</select>;
+        if (f.type === "check") return <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}><input type="checkbox" checked={!!val} onChange={e => setField(f.id, e.target.checked)} style={{ width: 16, height: 16 }} /><span style={{ fontSize: 12, color: val ? C.green : C.gray500 }}>{val ? "Yes" : "No"}</span></label>;
+        if (f.type === "rating") return <div style={{ display: "flex", gap: 4 }}>{[1,2,3,4,5].map(n => <button key={n} onClick={() => setField(f.id, n)} style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${val >= n ? C.navy : C.gray300}`, background: val >= n ? C.navy : C.white, color: val >= n ? C.white : C.gray400, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{n}</button>)}</div>;
+        return null;
+      };
+
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: C.gray50, display: "flex", flexDirection: "column" }}>
+          <div style={{ background: C.navy, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 52 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: C.white, fontSize: 18, cursor: "pointer" }}>←</button>
+              <span style={{ color: C.white, fontSize: 15, fontWeight: 700 }}>🔍 Roof Inspection</span>
+              <select value={status} onChange={e => setStatus(e.target.value)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.1)", color: C.white, fontSize: 11, fontWeight: 600 }}>
+                {INSPECTION_STATUSES.map(s => <option key={s} value={s} style={{ color: C.navy }}>{s}</option>)}
+              </select>
+            </div>
+            <button onClick={() => onSave({ ...inspection, data, status, summary, updatedAt: new Date().toISOString(), updatedBy: user.name })} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: C.green, color: C.white, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Save Inspection</button>
+          </div>
+          <div style={{ flex: 1, overflow: "auto", padding: 24, maxWidth: 800, margin: "0 auto", width: "100%" }}>
+            {INSPECTION_SECTIONS.map(sec => (
+              <div key={sec.id} style={{ marginBottom: 16, background: C.white, borderRadius: 12, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
+                <div onClick={() => setExpandedSection(expandedSection === sec.id ? null : sec.id)} style={{ padding: "14px 20px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", background: expandedSection === sec.id ? C.navy : C.white }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: expandedSection === sec.id ? C.white : C.navy }}>{sec.label}</span>
+                  <span style={{ fontSize: 11, color: expandedSection === sec.id ? "rgba(255,255,255,0.6)" : C.gray400 }}>{sec.fields.filter(f => data[f.id] != null && data[f.id] !== "" && data[f.id] !== false).length}/{sec.fields.length} filled</span>
+                </div>
+                {expandedSection === sec.id && (
+                  <div style={{ padding: 20 }}>
+                    {sec.fields.map(f => (
+                      <div key={f.id} style={{ marginBottom: 16 }}>
+                        <label style={{ fontSize: 11, fontWeight: 600, color: C.gray500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block" }}>{f.label}</label>
+                        {renderField(f)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.gray200}`, padding: 20, marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: C.gray500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block" }}>Inspector Summary / Recommendations</label>
+              <textarea value={summary} onChange={e => setSummary(e.target.value)} rows={4} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, resize: "vertical", outline: "none" }} placeholder="Overall findings and recommended actions..." />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function InspectionsList({ inspections, onOpen, onCreate, entityType, entityId }) {
+      const filtered = inspections.filter(i => i.entityType === entityType && i.entityId === entityId);
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Inspections ({filtered.length})</span>
+            <button onClick={onCreate} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ New Inspection</button>
+          </div>
+          {filtered.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: C.gray400, fontSize: 13 }}>No inspections yet</div>
+          ) : filtered.map(ins => (
+            <div key={ins.id} onClick={() => onOpen(ins)} style={{ padding: "12px 16px", background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, marginBottom: 8, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = C.white}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{new Date(ins.createdAt).toLocaleDateString()} — {ins.data?.roof_type || "Roof Inspection"}</div>
+                <div style={{ fontSize: 11, color: C.gray400, marginTop: 2 }}>By {ins.createdBy} · {Object.keys(ins.data || {}).length} fields completed</div>
+              </div>
+              <span style={{ padding: "3px 10px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: ins.status === "Complete" ? C.greenBg : ins.status === "In Progress" ? "#FEF3C7" : C.gray100, color: ins.status === "Complete" ? C.green : ins.status === "In Progress" ? "#D97706" : C.gray500 }}>{ins.status}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ============================================================
     // MODULE: SERVICE (Tickets linked to shared entities)
     // ============================================================
     const TICKET_TYPES = ["Leak / Repair", "Warranty Claim", "Scheduled Maintenance", "Inspection Follow-Up", "Emergency", "Other"];
@@ -4554,7 +4690,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     const PRIORITY_COLORS = { Emergency: C.red, High: "#F97316", Medium: C.yellow, Low: C.gray400 };
     const TSTATUS_COLORS = { New: C.blue, Dispatched: "#8B5CF6", "In Progress": C.green, "On Hold": C.yellow, Complete: "#6366F1", Closed: C.gray400 };
 
-    function ServiceModule({ user, role, entities, crmUsers, onMention }) {
+    function ServiceModule({ user, role, entities, crmUsers, onMention, inspections, setInspections }) {
       const { companies, properties, contacts, setCompanies } = entities;
       const [ticketsData, saveTickets] = useFirestoreCollection("cr_service_tickets", []);
       const ticketsRef = useRef(ticketsData); ticketsRef.current = ticketsData;
@@ -4636,7 +4772,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             ) : <div style={{ padding: 48, textAlign: "center", background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 36, opacity: 0.2, marginBottom: 12 }}>🔧</div><p style={{ fontSize: 13, color: C.gray400 }}>No tickets found</p></div>}
           </div>
           {showCreate && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreate(false)} onCreate={handleCreate} onCreateEntity={handleCreateEntity} />}
-          {selectedTicket && <TicketDetailPanel ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} co={co} prop={pr} ct={ct} onClose={() => setSelectedTicket(null)} onUpdate={handleUpdate} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} />}
+          {selectedTicket && <TicketDetailPanel ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} co={co} prop={pr} ct={ct} onClose={() => setSelectedTicket(null)} onUpdate={handleUpdate} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} inspections={inspections || []} setInspections={setInspections} />}
         </div>
       );
     }
@@ -4686,14 +4822,23 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
-    function TicketDetailPanel({ ticket, co, prop, ct, onClose, onUpdate, onDelete, user, crmUsers, onMention }) {
+    function TicketDetailPanel({ ticket, co, prop, ct, onClose, onUpdate, onDelete, user, crmUsers, onMention, inspections, setInspections }) {
       const [activeTab, setActiveTab] = useState("details");
       const [newNote, setNewNote] = useState("");
       const [showMentionSuggest, setShowMentionSuggest] = useState(false);
       const [mentionFilter, setMentionFilter] = useState("");
+      const [editingInspection, setEditingInspection] = useState(null);
       const company = co(ticket.companyId); const property = prop(ticket.propertyId); const contact = ct(ticket.contactId);
       const pc = PRIORITY_COLORS[ticket.priority] || C.gray400; const sc = TSTATUS_COLORS[ticket.status] || C.gray400;
       const handleStatusChange = (s) => onUpdate(ticket.id, { status: s, activities: [...(ticket.activities || []), { type: "status", text: `Status → ${s}`, by: user.name, at: new Date().toISOString() }] });
+
+      const handleSaveInspection = (ins) => {
+        if (setInspections) setInspections(prev => { const idx = prev.findIndex(i => i.id === ins.id); return idx >= 0 ? prev.map(i => i.id === ins.id ? ins : i) : [...prev, ins]; });
+        setEditingInspection(null);
+      };
+      const handleCreateInspection = () => {
+        setEditingInspection({ id: generateId(), entityType: "ticket", entityId: ticket.id, data: {}, status: "Draft", summary: "", createdAt: new Date().toISOString(), createdBy: user.name });
+      };
 
       const handleNoteChange = (val) => {
         setNewNote(val);
@@ -4745,7 +4890,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           {/* Tabs */}
           <div style={{ background: C.white, borderBottom: `1px solid ${C.gray200}`, flexShrink: 0 }}>
             <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", display: "flex", gap: 0 }}>
-              {[{ id: "details", label: "Details" }, { id: "activity", label: "Activity" }, { id: "email", label: "📧 Email" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "12px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}` }}>{t.label}</button>)}
+              {[{ id: "details", label: "Details" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "ticket" && i.entityId === ticket.id).length})` }, { id: "activity", label: "Activity" }, { id: "email", label: "📧 Email" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "12px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}` }}>{t.label}</button>)}
             </div>
           </div>
           {/* Content */}
@@ -4768,6 +4913,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 </div>
                 <div>{[["Type", ticket.type], ["Priority", ticket.priority], ["Assigned", ticket.assignedTo || "Unassigned"], ["Created", new Date(ticket.createdAt).toLocaleString()], ["By", ticket.createdBy]].map(([l, v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>{l}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{v}</span></div>)}</div>
                 {ticket.description && <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{ticket.description}</div>}
+              </div>}
+              {activeTab === "inspections" && <div>
+                <InspectionsList inspections={inspections || []} entityType="ticket" entityId={ticket.id} onOpen={ins => setEditingInspection(ins)} onCreate={handleCreateInspection} />
+                {editingInspection && <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onClose={() => setEditingInspection(null)} user={user} />}
               </div>}
               {activeTab === "activity" && <div>
                 <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}><input value={newNote} onChange={e => handleNoteChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note... (use @name to mention)" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} /><button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button>
@@ -5514,6 +5663,11 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const setCrmUsers = useCallback(u => { const n = typeof u === "function" ? u(crmUsersRef.current) : u; saveCrmUsers(n); }, [saveCrmUsers]);
       const crmUsers = crmUsersData;
 
+      // ── INSPECTIONS ─────────────────────────────────────────
+      const [inspectionsData, saveInspections] = useFirestoreCollection("cr_inspections", []);
+      const inspectionsRef = useRef(inspectionsData); inspectionsRef.current = inspectionsData;
+      const setInspections = useCallback(u => { const n = typeof u === "function" ? u(inspectionsRef.current) : u; saveInspections(n); }, [saveInspections]);
+
       // ── MENTIONS / NOTIFICATIONS ──────────────────────────────
       const [mentionsData, saveMentions] = useFirestoreCollection("cr_mentions", []);
       const mentionsRef = useRef(mentionsData); mentionsRef.current = mentionsData;
@@ -5753,8 +5907,8 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
           </div>
           {currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
           {currentModule === "production" && <ProductionModule user={user} role={role} />}
-          {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} />}
-          {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} />}
+          {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
+          {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
           {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} />}
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
