@@ -6955,6 +6955,16 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "create_product", description: "Create a new product in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, category: { type: "string" }, manufacturer: { type: "string" }, sku: { type: "string" }, price: { type: "number" }, unit: { type: "string", description: "Unit of measure, e.g. each, bundle, sq, roll" }, description: { type: "string" } }, required: ["name"] } },
         { name: "create_vendor", description: "Create a new vendor in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, contactName: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, category: { type: "string" } }, required: ["name"] } },
         { name: "process_document", description: "Process an uploaded document (PDF, Excel, Word) to extract data for the catalog, vendor list, or other CRM data. Upload a pricing sheet to update product prices, a vendor list to create vendors, or other documents to extract structured data.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["update_pricing", "import_vendors", "import_products", "extract_data"], description: "What to do with the document data" }, data: { type: "array", items: { type: "object" }, description: "Extracted data rows from the document" } }, required: ["action", "data"] } },
+        { name: "update_company", description: "Update an existing company — change name, market, type, phone, address, notes", input_schema: { type: "object", properties: { companyId: { type: "string" }, name: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, type: { type: "string" }, phone: { type: "string" }, address: { type: "string" }, notes: { type: "string" } }, required: ["companyId"] } },
+        { name: "update_contact", description: "Update an existing contact — change name, email, phone, title, company", input_schema: { type: "object", properties: { contactId: { type: "string" }, name: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" }, companyId: { type: "string" } }, required: ["contactId"] } },
+        { name: "update_property", description: "Update an existing property — change name, address, sqft, roofType, buildingCount, company", input_schema: { type: "object", properties: { propertyId: { type: "string" }, name: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" }, companyId: { type: "string" } }, required: ["propertyId"] } },
+        { name: "update_product", description: "Update an existing product in the catalog — change name, category, manufacturer, sku, price, unit, description", input_schema: { type: "object", properties: { productId: { type: "string" }, name: { type: "string" }, category: { type: "string" }, manufacturer: { type: "string" }, sku: { type: "string" }, price: { type: "number" }, unit: { type: "string" }, description: { type: "string" } }, required: ["productId"] } },
+        { name: "update_vendor", description: "Update an existing vendor — change name, contactName, phone, email, category", input_schema: { type: "object", properties: { vendorId: { type: "string" }, name: { type: "string" }, contactName: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, category: { type: "string" } }, required: ["vendorId"] } },
+        { name: "create_assembly", description: "Create a new assembly in the catalog — a group of products that go together", input_schema: { type: "object", properties: { name: { type: "string" }, productIds: { type: "array", items: { type: "string" }, description: "Product IDs to include" }, laborCost: { type: "number" }, description: { type: "string" } }, required: ["name"] } },
+        { name: "update_assembly", description: "Update an existing assembly — change name, products, labor cost, description", input_schema: { type: "object", properties: { assemblyId: { type: "string" }, name: { type: "string" }, productIds: { type: "array", items: { type: "string" } }, laborCost: { type: "number" }, description: { type: "string" } }, required: ["assemblyId"] } },
+        { name: "create_system", description: "Create a new roof system in the catalog — a combination of assemblies and products", input_schema: { type: "object", properties: { name: { type: "string" }, assemblyIds: { type: "array", items: { type: "string" }, description: "Assembly IDs to include" }, standardSOW: { type: "string", description: "Standard scope of work text" }, description: { type: "string" } }, required: ["name"] } },
+        { name: "update_system", description: "Update an existing roof system — change name, assemblies, SOW, description", input_schema: { type: "object", properties: { systemId: { type: "string" }, name: { type: "string" }, assemblyIds: { type: "array", items: { type: "string" } }, standardSOW: { type: "string" }, description: { type: "string" } }, required: ["systemId"] } },
+        { name: "search_catalog", description: "Search products, vendors, assemblies, and systems in the catalog", input_schema: { type: "object", properties: { query: { type: "string" }, type: { type: "string", enum: ["all", "products", "vendors", "assemblies", "systems"] } }, required: ["query"] } },
       ];
 
       // ── Tool execution ───────────────────────────────────────
@@ -7111,6 +7121,96 @@ Extract every identifiable expense. Use the most specific category possible. If 
             }
             return { success: false, message: `Unknown process_document action: ${action}` };
           }
+          // ── Update tools for directory objects ──
+          if (name === "update_company") {
+            const { companyId, ...updates } = input;
+            const found = companies.find(c => c.id === companyId);
+            if (!found) return { success: false, message: `Company ${companyId} not found` };
+            setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, ...updates } : c));
+            return { success: true, message: `Updated company "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "update_contact") {
+            const { contactId, ...updates } = input;
+            const found = contacts.find(c => c.id === contactId);
+            if (!found) return { success: false, message: `Contact ${contactId} not found` };
+            setContacts(prev => prev.map(c => c.id === contactId ? { ...c, ...updates } : c));
+            return { success: true, message: `Updated contact "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "update_property") {
+            const { propertyId, ...updates } = input;
+            const found = properties.find(p => p.id === propertyId);
+            if (!found) return { success: false, message: `Property ${propertyId} not found` };
+            setProperties(prev => prev.map(p => p.id === propertyId ? { ...p, ...updates } : p));
+            return { success: true, message: `Updated property "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          // ── Catalog update tools (read/write via Firestore + localStorage) ──
+          const readCatalogCollection = (key) => {
+            try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch(e) { return []; }
+          };
+          const writeCatalogCollection = async (key, data) => {
+            try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
+            if (firestoreDb) { try { await firestoreDb.collection(key).doc("data").set({ items: data, updatedAt: new Date().toISOString() }); } catch(e) {} }
+          };
+          if (name === "update_product") {
+            const { productId, ...updates } = input;
+            const items = readCatalogCollection("cr_product_catalog");
+            const found = items.find(p => p.id === productId);
+            if (!found) return { success: false, message: `Product ${productId} not found` };
+            if (updates.price !== undefined) updates.price = Number(updates.price) || 0;
+            const updated = items.map(p => p.id === productId ? { ...p, ...updates, updatedAt: now } : p);
+            await writeCatalogCollection("cr_product_catalog", updated);
+            return { success: true, message: `Updated product "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "update_vendor") {
+            const { vendorId, ...updates } = input;
+            const items = readCatalogCollection("cr_vendors");
+            const found = items.find(v => v.id === vendorId);
+            if (!found) return { success: false, message: `Vendor ${vendorId} not found` };
+            const updated = items.map(v => v.id === vendorId ? { ...v, ...updates, updatedAt: now } : v);
+            await writeCatalogCollection("cr_vendors", updated);
+            return { success: true, message: `Updated vendor "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "create_assembly") {
+            const assembly = { id, name: input.name, productIds: input.productIds || [], laborCost: Number(input.laborCost) || 0, description: input.description || "", createdAt: now };
+            const items = readCatalogCollection("cr_assemblies");
+            await writeCatalogCollection("cr_assemblies", [...items, assembly]);
+            return { success: true, message: `Created assembly "${input.name}" (ID: ${id})`, id };
+          }
+          if (name === "update_assembly") {
+            const { assemblyId, ...updates } = input;
+            const items = readCatalogCollection("cr_assemblies");
+            const found = items.find(a => a.id === assemblyId);
+            if (!found) return { success: false, message: `Assembly ${assemblyId} not found` };
+            if (updates.laborCost !== undefined) updates.laborCost = Number(updates.laborCost) || 0;
+            const updated = items.map(a => a.id === assemblyId ? { ...a, ...updates, updatedAt: now } : a);
+            await writeCatalogCollection("cr_assemblies", updated);
+            return { success: true, message: `Updated assembly "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "create_system") {
+            const system = { id, name: input.name, assemblyIds: input.assemblyIds || [], standardSOW: input.standardSOW || "", description: input.description || "", createdAt: now };
+            const items = readCatalogCollection("cr_systems");
+            await writeCatalogCollection("cr_systems", [...items, system]);
+            return { success: true, message: `Created roof system "${input.name}" (ID: ${id})`, id };
+          }
+          if (name === "update_system") {
+            const { systemId, ...updates } = input;
+            const items = readCatalogCollection("cr_systems");
+            const found = items.find(s => s.id === systemId);
+            if (!found) return { success: false, message: `System ${systemId} not found` };
+            const updated = items.map(s => s.id === systemId ? { ...s, ...updates, updatedAt: now } : s);
+            await writeCatalogCollection("cr_systems", updated);
+            return { success: true, message: `Updated system "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
+          }
+          if (name === "search_catalog") {
+            const q = (input.query || "").toLowerCase();
+            const t = input.type || "all";
+            const results = {};
+            if (t === "all" || t === "products") { const items = readCatalogCollection("cr_product_catalog"); results.products = items.filter(p => (p.name || "").toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q) || (p.manufacturer || "").toLowerCase().includes(q)).slice(0, 15).map(p => ({ id: p.id, name: p.name, category: p.category, manufacturer: p.manufacturer, sku: p.sku, price: p.price, unit: p.unit })); }
+            if (t === "all" || t === "vendors") { const items = readCatalogCollection("cr_vendors"); results.vendors = items.filter(v => (v.name || "").toLowerCase().includes(q) || (v.category || "").toLowerCase().includes(q)).slice(0, 15).map(v => ({ id: v.id, name: v.name, contactName: v.contactName, email: v.email, category: v.category })); }
+            if (t === "all" || t === "assemblies") { const items = readCatalogCollection("cr_assemblies"); results.assemblies = items.filter(a => (a.name || "").toLowerCase().includes(q)).slice(0, 15).map(a => ({ id: a.id, name: a.name, productCount: (a.productIds || []).length, laborCost: a.laborCost })); }
+            if (t === "all" || t === "systems") { const items = readCatalogCollection("cr_systems"); results.systems = items.filter(s => (s.name || "").toLowerCase().includes(q)).slice(0, 15).map(s => ({ id: s.id, name: s.name, assemblyCount: (s.assemblyIds || []).length })); }
+            return { success: true, results };
+          }
           return { success: false, message: `Unknown tool: ${name}` };
         } catch (e) { return { success: false, message: `Error: ${e.message}` }; }
       };
@@ -7125,7 +7225,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
         return `You are the AI assistant for Colony Roofers CRM. You can both ANSWER QUESTIONS and TAKE ACTIONS using tools. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. Currently viewing: ${currentModule} module.
 
-IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm first. Always confirm what you did after taking actions. You can create ANY type of object: companies, contacts, properties, leads, tickets, products, and vendors. If you need clarification on required fields, ask the user before creating.
+IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm or search_catalog first. Always confirm what you did after taking actions. You can create AND UPDATE any object: companies, contacts, properties, leads, tickets, products, vendors, assemblies, and systems. Use search_catalog to find catalog item IDs. If you need clarification on required fields, ask the user before creating.
 
 When drafting emails, use Zach's style: short (1-3 sentences), direct, casual but professional. Client emails get a brief personal opener. Internal emails skip pleasantries. Sign off: Zach Reece, Owner / Colony Roofers / 404-806-0956
 
