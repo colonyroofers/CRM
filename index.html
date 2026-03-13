@@ -6778,7 +6778,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
             <div style={{ width: "100%", maxWidth: 800, background: C.white, margin: "40px auto", borderRadius: 16, boxShadow: "0 25px 60px rgba(0,0,0,0.3)", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
               <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-                  <button onClick={() => setSelected(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {parentCo && <button onClick={() => setSelected({ type: "company", id: parentCo.id })} style={{ background: "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← {parentCo.name}</button>}
+                    <button onClick={() => setSelected(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>✕ Close</button>
+                  </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.6, textTransform: "uppercase" }}>{type}</span>
                     <button onClick={() => handleDelete(type, id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Delete</button>
@@ -6808,7 +6811,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                       {entity.notes && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Notes</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.notes}</span></div>}
                     </>
                   ) : (
-                    Object.entries(entity).filter(([k]) => !["id", "createdAt", "companyId"].includes(k) && entity[k]).map(([k, v]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize" }}>{k.replace(/([A-Z])/g, " $1")}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{String(v)}</span></div>)
+                    Object.entries(entity).filter(([k, v]) => !["id", "createdAt", "companyId"].includes(k) && v != null && v !== "" && typeof v !== "object").map(([k, v]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize" }}>{k.replace(/([A-Z])/g, " $1")}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{String(v)}</span></div>)
                   )}
                 </div>
                 {/* Related Properties */}
@@ -6895,7 +6898,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           {showCreate && <Portal><CreateEntityModal type={showCreate} companies={companies} contacts={contacts} subcontractors={subcontractors} onClose={() => setShowCreate(null)} onCreate={handleCreate} /></Portal>}
           {showCreateLead && <Portal><CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} /></Portal>}
           {showCreateTicket && <Portal><CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} crmUsers={crmUsers} /></Portal>}
-          <Portal><EntityDetail /></Portal>
+          <Portal>{EntityDetail()}</Portal>
           {/* Lead detail overlay from directory */}
           {viewingLead && (() => {
             const vl = salesLeads.find(l => l.id === viewingLead.id) || viewingLead;
