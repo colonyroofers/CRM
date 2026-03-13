@@ -6185,7 +6185,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     // MODULE: DAILY DIGEST
     // ============================================================
-    function DailyDigestModule({ user, role, entities, salesLeads, serviceTickets, inspections }) {
+    function DailyDigestModule({ user, role, entities, salesLeads, serviceTickets, inspections, crmUsers }) {
       const today = new Date().toISOString().split("T")[0];
       const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
@@ -6258,6 +6258,93 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ fontSize: 11, fontWeight: 600, color: C.gray500, marginTop: 4 }}>Open Tickets</div>
               </div>
             </div>
+
+            {/* Quick Add Task with Object Attachment */}
+            {(() => {
+              const [qaTask, setQaTask] = useState("");
+              const [qaDue, setQaDue] = useState("");
+              const [qaAssignee, setQaAssignee] = useState(user?.name || "");
+              const [qaObjType, setQaObjType] = useState("");
+              const [qaObjId, setQaObjId] = useState("");
+              const [qaExpanded, setQaExpanded] = useState(false);
+              const activeUsers = (crmUsers || []).filter(u => u.active !== false);
+              const { companies = [], properties = [], contacts = [] } = entities || {};
+
+              const objectTypeOptions = [
+                { value: "", label: "— No attachment —" },
+                { value: "lead", label: "Project" },
+                { value: "estimate", label: "Estimate" },
+                { value: "company", label: "Company" },
+                { value: "property", label: "Property" },
+                { value: "contact", label: "Contact" },
+                { value: "inspection", label: "Inspection" },
+                { value: "service_ticket", label: "Service Ticket" },
+              ];
+
+              const getObjectOptions = () => {
+                if (qaObjType === "lead") return (salesLeads || []).map(l => ({ value: l.id, label: l.jobName || l.company || "Project" }));
+                if (qaObjType === "company") return companies.map(c => ({ value: c.id, label: c.name }));
+                if (qaObjType === "property") return properties.map(p => ({ value: p.id, label: `${p.name} — ${p.address || ""}` }));
+                if (qaObjType === "contact") return contacts.map(c => ({ value: c.id, label: `${c.name}${c.email ? ` (${c.email})` : ""}` }));
+                if (qaObjType === "inspection") return (inspections || []).map(i => ({ value: i.id, label: `${i.propertyName || i.address || "Inspection"} — ${i.inspector || ""}` }));
+                if (qaObjType === "service_ticket") return (serviceTickets || []).map(t => ({ value: t.id, label: `${t.subject} — ${t.status}` }));
+                if (qaObjType === "estimate") {
+                  // Collect estimates from all Firestore collections starting with cr_estimates_
+                  const estKeys = Object.keys(localStorage).filter(k => k.startsWith("cr_estimates_"));
+                  const ests = [];
+                  estKeys.forEach(k => { try { JSON.parse(localStorage.getItem(k) || "[]").forEach(e => ests.push({ value: `${k.replace("cr_estimates_", "")}_est_${e.id}`, label: `Est: ${e.leadId ? (salesLeads || []).find(l => l.id === e.leadId)?.jobName || "Estimate" : "Estimate"} — $${Number(e.totalPrice || 0).toLocaleString()}` })); } catch(ex) {} });
+                  return ests;
+                }
+                return [];
+              };
+
+              const handleQuickAdd = () => {
+                if (!qaTask.trim()) return;
+                if (!qaAssignee) { alert("Please assign the task."); return; }
+                const detectedDate = qaDue || detectDateFromText(qaTask) || null;
+                const taskObj = { id: generateId(), title: qaTask.trim(), dueDate: detectedDate, assignee: qaAssignee, completed: false, createdAt: new Date().toISOString(), createdBy: user.name };
+                const collKey = qaObjType && qaObjId ? `cr_tasks_${qaObjType}_${qaObjId}` : `cr_tasks_user_${user.email}`;
+                try {
+                  const existing = JSON.parse(localStorage.getItem(collKey) || "[]");
+                  localStorage.setItem(collKey, JSON.stringify([...existing, taskObj]));
+                  if (firestoreDb) { firestoreDb.collection("kv").doc(collKey).set({ value: JSON.stringify([...existing, taskObj]) }); }
+                } catch(ex) {}
+                setQaTask(""); setQaDue(""); setQaAssignee(user?.name || ""); setQaObjType(""); setQaObjId("");
+                alert("Task created! Refresh Daily Digest to see it.");
+              };
+
+              return (
+                <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+                  <div onClick={() => setQaExpanded(!qaExpanded)} style={{ padding: "12px 16px", borderBottom: qaExpanded ? `2px solid ${C.green}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>➕ Quick Add Task</span>
+                    <span style={{ fontSize: 11, color: C.gray400 }}>{qaExpanded ? "▲" : "▼"}</span>
+                  </div>
+                  {qaExpanded && (
+                    <div style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                        <input value={qaTask} onChange={e => { setQaTask(e.target.value); if (!qaDue) { const d = detectDateFromText(e.target.value); if (d) setQaDue(d); } }} onKeyDown={e => e.key === "Enter" && handleQuickAdd()} placeholder="Task description (dates auto-detected)..." style={{ flex: 1, minWidth: 200, padding: "7px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy }} />
+                        <input type="date" value={qaDue} onChange={e => setQaDue(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${qaDue ? C.green + "80" : C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, width: 120 }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                        <select value={qaAssignee} onChange={e => setQaAssignee(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, flex: 1, minWidth: 140 }}>
+                          {activeUsers.length > 0 ? activeUsers.map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${ROLE_PRESETS[u.role]?.label || u.role})` : ""}</option>) : <option value={user?.name || ""}>{user?.name || "Me"}</option>}
+                        </select>
+                        <select value={qaObjType} onChange={e => { setQaObjType(e.target.value); setQaObjId(""); }} style={{ padding: "7px 8px", border: `1px solid ${qaObjType ? C.blue + "80" : C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, flex: 1, minWidth: 140 }}>
+                          {objectTypeOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                        {qaObjType && (() => { const opts = getObjectOptions(); return (
+                          <select value={qaObjId} onChange={e => setQaObjId(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${qaObjId ? C.green + "80" : C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, flex: 1, minWidth: 180 }}>
+                            <option value="">— Select {objectTypeOptions.find(o => o.value === qaObjType)?.label} —</option>
+                            {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ); })()}
+                        <button onClick={handleQuickAdd} style={{ padding: "7px 16px", borderRadius: 6, border: "none", background: C.green, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add Task</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Overdue tasks */}
             {overdueTasks.length > 0 && (
@@ -7635,7 +7722,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                   </div>
                 </div>
               )}
-              {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} />}
+              {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
               {!settingsView && currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
