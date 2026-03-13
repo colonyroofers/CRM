@@ -3828,19 +3828,25 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleDrop = (stageId, e) => { e.preventDefault(); if (dragLead && dragLead.stage !== stageId) handleStageChange(dragLead.id, stageId); setDragLead(null); };
       const handleDelete = (id) => { if (confirm("Delete this lead?")) { setLeads(prev => prev.filter(l => l.id !== id)); setSelectedLead(null); } };
 
-      const LeadCard = ({ lead }) => (
+      const LeadCard = ({ lead }) => {
+        const propName = pr(lead.propertyId)?.name;
+        return (
         <div draggable onDragStart={() => setDragLead(lead)} onClick={() => setSelectedLead(lead)}
           style={{ padding: "12px 14px", background: C.white, borderRadius: 8, border: `1px solid ${C.gray200}`, cursor: "pointer", marginBottom: 8, transition: "all 0.15s" }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = C.red + "60"; }} onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>{leadName(lead)}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 2 }}>{leadName(lead)}</div>
+          {propName && <div style={{ fontSize: 11, color: C.gray600, marginBottom: 2 }}>🏠 {propName}</div>}
           <div style={{ fontSize: 11, color: C.gray500, marginBottom: 6 }}>{leadContact(lead)}</div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <MarketTag market={lead.market} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <MarketTag market={lead.market} />
+              {lead.constructionType && <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: lead.constructionType === "New Construction" ? "#DBEAFE" : "#FEF3C7", color: lead.constructionType === "New Construction" ? "#2563EB" : "#D97706" }}>{lead.constructionType}</span>}
+            </div>
             <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{formatCurrency(lead.estimatedValue || 0)}</span>
           </div>
           {lead.nextAction && <div style={{ marginTop: 6, fontSize: 10, color: C.blue, fontWeight: 600, padding: "2px 6px", background: C.blueBg, borderRadius: 4, display: "inline-block" }}>{lead.nextAction}</div>}
-        </div>
-      );
+        </div>);
+      };
 
       return (
         <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
@@ -3955,7 +3961,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
     function CreateLeadModal({ entities, onClose, onCreate, prefill }) {
       const { companies, properties, contacts } = entities;
-      const [form, setForm] = useState({ jobName: "", projectType: prefill?.projectType || "Apartment Complex", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", market: "ATL", source: "ZoomInfo", estimatedValue: 0, notes: "" });
+      const [form, setForm] = useState({ jobName: "", projectType: prefill?.projectType || "Apartment Complex", constructionType: "Replacement", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", market: "ATL", source: "ZoomInfo", estimatedValue: 0, notes: "" });
       const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
@@ -4003,7 +4009,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
             </div>
             <div style={{ padding: "20px 28px 28px", display: "grid", gap: 14 }}>
               <div><label style={lsReq}>Job Name *</label><input style={{ ...fs, fontWeight: 600 }} value={form.jobName} onChange={e => setForm(f => ({ ...f, jobName: e.target.value }))} placeholder="e.g. Preserve at Tampa Palms — Re-Roof Phase 1" /></div>
-              <div><label style={lsReq}>Project Type *</label><select style={fs} value={form.projectType} onChange={e => setForm(f => ({ ...f, projectType: e.target.value, companyId: e.target.value === "Residential" ? "" : f.companyId }))}>{PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div><label style={lsReq}>Project Type *</label><select style={fs} value={form.projectType} onChange={e => setForm(f => ({ ...f, projectType: e.target.value, companyId: e.target.value === "Residential" ? "" : f.companyId }))}>{PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div><label style={lsReq}>Construction Type *</label><select style={fs} value={form.constructionType} onChange={e => setForm(f => ({ ...f, constructionType: e.target.value }))}><option value="Replacement">Replacement</option><option value="New Construction">New Construction</option></select></div>
+              </div>
               <div style={{ padding: "14px 16px", borderRadius: 10, background: C.gray50, border: `1px solid ${C.gray200}` }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>Link to Directory</h4>
                 <div style={{ display: "grid", gap: 10 }}>
@@ -4304,7 +4313,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [form, setForm] = useState(
         type === "company" ? { name: "", market: "ATL", type: "Property Manager", phone: "", address: "", notes: "" } :
         type === "property" ? { name: "", companyId: "", contactId: "", propertyType: "Apartment Complex", address: "", market: "ATL", sqft: 0, roofType: "", buildingCount: 1, notes: "" } :
-        { name: "", companyId: "", contactType: "B2B", email: "", phone: "", title: "", notes: "" }
+        { firstName: "", lastName: "", name: "", companyId: "", contactType: "B2B", email: "", officePhone: "", mobilePhone: "", title: "", notes: "" }
       );
       const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
@@ -4317,15 +4326,18 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const filteredContacts = form.companyId ? (contacts || []).filter(c => c.companyId === form.companyId) : (contacts || []);
 
       const validate = () => {
-        if (!form.name?.trim()) return "Name is required.";
+        if (type === "contact") {
+          if (!form.firstName?.trim()) return "First name is required.";
+          if (!form.lastName?.trim()) return "Last name is required.";
+          if (!form.contactType) return "Contact type (B2C or B2B) is required.";
+          if (contactIsB2B && !form.companyId) return "B2B contacts must have a company.";
+        } else {
+          if (!form.name?.trim()) return "Name is required.";
+        }
         if (type === "property") {
           if (!form.propertyType) return "Property type is required.";
           if (propertyNeedsCompany && !form.companyId) return "Non-residential properties must have a company.";
           if (!form.contactId) return "A contact is required for every property.";
-        }
-        if (type === "contact") {
-          if (!form.contactType) return "Contact type (B2C or B2B) is required.";
-          if (contactIsB2B && !form.companyId) return "B2B contacts must have a company.";
         }
         return "";
       };
@@ -4334,7 +4346,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const err = validate();
         if (err) { setValidationError(err); return; }
         setValidationError("");
-        onCreate(type, form);
+        const submitData = type === "contact" ? { ...form, name: `${form.firstName.trim()} ${form.lastName.trim()}` } : form;
+        onCreate(type, submitData);
       };
 
       return (
@@ -4345,7 +4358,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400 }}>{I.x}</button>
             </div>
             <div style={{ padding: "20px 28px 28px", display: "grid", gap: 12 }}>
-              <div><label style={lsReq}>Name *</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+              {type !== "contact" && <div><label style={lsReq}>Name *</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>}
 
               {/* ── COMPANY FIELDS ── */}
               {type === "company" && <>
@@ -4373,12 +4386,17 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
               {/* ── CONTACT FIELDS ── */}
               {type === "contact" && <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={lsReq}>First Name *</label><input style={fs} value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} /></div>
+                  <div><label style={lsReq}>Last Name *</label><input style={fs} value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} /></div>
+                </div>
                 <div><label style={lsReq}>Contact Type *</label><select style={fs} value={form.contactType} onChange={e => setForm(f => ({ ...f, contactType: e.target.value, companyId: e.target.value === "B2C" ? "" : f.companyId }))}>{CONTACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                 {contactIsB2B && <div><label style={lsReq}>Company *</label><SearchableSelect options={companies.map(c => ({ value: c.id, label: c.name, sub: `${c.market || ""} · ${c.type || ""}` }))} value={form.companyId} onChange={v => setForm(f => ({ ...f, companyId: v }))} placeholder="Type to search companies..." required emptyMsg="No companies found" /></div>}
                 {!contactIsB2B && <div><label style={ls}>Company <span style={{ fontWeight: 400, color: C.gray400 }}>(optional for B2C)</span></label><SearchableSelect options={companies.map(c => ({ value: c.id, label: c.name, sub: `${c.market || ""}` }))} value={form.companyId} onChange={v => setForm(f => ({ ...f, companyId: v }))} placeholder="Type to search companies..." /></div>}
+                <div><label style={ls}>Email</label><input style={fs} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div><label style={ls}>Email</label><input style={fs} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-                  <div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+                  <div><label style={ls}>Office Phone</label><input style={fs} value={form.officePhone} onChange={e => setForm(f => ({ ...f, officePhone: e.target.value }))} /></div>
+                  <div><label style={ls}>Mobile Phone</label><input style={fs} value={form.mobilePhone} onChange={e => setForm(f => ({ ...f, mobilePhone: e.target.value }))} /></div>
                 </div>
                 <div><label style={ls}>Title / Role</label><input style={fs} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
               </>}
