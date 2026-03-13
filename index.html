@@ -6509,13 +6509,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const handleAddNote = () => {
         if (!newNote.trim()) return;
-        // Parse @mentions and notify
-        const mentions = newNote.match(/@[\w\s]+/g) || [];
-        mentions.forEach(m => {
-          const name = m.slice(1).trim();
-          const target = (crmUsers || []).find(u => u.name?.toLowerCase() === name.toLowerCase());
-          if (target?.email && onMention) {
-            onMention(target.email, `mentioned you in a note on "${lead.jobName || "a project"}": "${newNote.trim().slice(0, 100)}"`);
+        // Parse @mentions by matching against known user names
+        (crmUsers || []).forEach(u => {
+          if (u.name && newNote.includes("@" + u.name) && u.email && onMention) {
+            onMention(u.email, `mentioned you in a note on "${lead.jobName || "a project"}": "${newNote.trim().slice(0, 100)}"`);
           }
         });
         onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] });
@@ -8004,12 +8001,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const handleAddNote = () => {
         if (!newNote.trim()) return;
-        const mentions = newNote.match(/@[\w\s]+/g) || [];
-        mentions.forEach(m => {
-          const name = m.slice(1).trim();
-          const target = (crmUsers || []).find(u => u.name?.toLowerCase() === name.toLowerCase());
-          if (target?.email && onMention) {
-            onMention(target.email, `mentioned you in a note on ticket "${ticket.subject || "a ticket"}": "${newNote.trim().slice(0, 100)}"`);
+        // Parse @mentions by matching against known user names
+        (crmUsers || []).forEach(u => {
+          if (u.name && newNote.includes("@" + u.name) && u.email && onMention) {
+            onMention(u.email, `mentioned you in a note on ticket "${ticket.subject || "a ticket"}": "${newNote.trim().slice(0, 100)}"`);
           }
         });
         onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] });
@@ -8259,14 +8254,23 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const myOpen = allTasks.filter(t => !t.completed && (t.assignee === user.name || t.createdBy === user.name)).length;
       const overdueCount = allTasks.filter(t => !t.completed && t.dueDate && t.dueDate < today).length;
 
+      const [fadingTasks, setFadingTasks] = useState(new Set());
+
       const toggleTask = (task) => {
+        const wasCompleted = task.completed;
         try {
           const existing = JSON.parse(localStorage.getItem(task._key) || "[]");
           const updated = existing.map(t => t.id === task.id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t);
           localStorage.setItem(task._key, JSON.stringify(updated));
           if (firestoreDb) firestoreDb.collection("kv").doc(task._key).set({ value: JSON.stringify(updated) });
         } catch(e) { console.warn("Storage/parse error:", e.message); }
-        setRefreshKey(k => k + 1);
+        // If completing a task, fade it out after 1.5s
+        if (!wasCompleted) {
+          setFadingTasks(prev => new Set([...prev, task.id]));
+          setTimeout(() => { setFadingTasks(prev => { const n = new Set(prev); n.delete(task.id); return n; }); setRefreshKey(k => k + 1); }, 1500);
+        } else {
+          setRefreshKey(k => k + 1);
+        }
       };
 
       const deleteTask = (task) => {
@@ -8342,10 +8346,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
             )
           );
         }
-        return React.createElement("div", { onClick: () => { setEditingId(t.id); setEditTitle(t.title); setEditDue(t.dueDate || ""); setEditAssignee(t.assignee || ""); }, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: C.white, borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 4, transition: "border-color 0.15s", cursor: "pointer" },
-          onMouseEnter: e => e.currentTarget.style.borderColor = C.blue + "60",
-          onMouseLeave: e => e.currentTarget.style.borderColor = C.gray200 },
-          React.createElement("input", { type: "checkbox", checked: !!t.completed, onChange: e => { e.stopPropagation(); toggleTask(t); }, style: { width: 18, height: 18, cursor: "pointer", accentColor: C.green, flexShrink: 0 } }),
+        const isFading = fadingTasks.has(t.id);
+        return React.createElement("div", { onClick: () => { setEditingId(t.id); setEditTitle(t.title); setEditDue(t.dueDate || ""); setEditAssignee(t.assignee || ""); }, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: isFading ? C.greenBg : C.white, borderRadius: 8, border: `1px solid ${isFading ? C.green + "40" : C.gray200}`, marginBottom: 4, transition: "all 0.5s ease", cursor: "pointer", opacity: isFading ? 0.5 : 1 },
+          onMouseEnter: e => { if (!isFading) e.currentTarget.style.borderColor = C.blue + "60"; },
+          onMouseLeave: e => { if (!isFading) e.currentTarget.style.borderColor = C.gray200; } },
+          React.createElement("input", { type: "checkbox", checked: !!t.completed || isFading, onChange: e => { e.stopPropagation(); toggleTask(t); }, style: { width: 18, height: 18, cursor: "pointer", accentColor: C.green, flexShrink: 0 } }),
           React.createElement("div", { style: { flex: 1, minWidth: 0 } },
             React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: t.completed ? C.gray400 : C.navy, textDecoration: t.completed ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title),
             React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", marginTop: 3, flexWrap: "wrap" } },
@@ -8448,7 +8453,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             React.createElement(SectionHeader, { label: "No Due Date", count: noDue.length, color: C.gray400 }),
             noDue.map(t => React.createElement(TaskRow, { key: t.id + t._key, t }))
           ),
-          filterStatus !== "open" && completedTasks.length > 0 && React.createElement(React.Fragment, null,
+          completedTasks.length > 0 && React.createElement(React.Fragment, null,
             React.createElement(SectionHeader, { label: "Completed", count: completedTasks.length, color: C.green }),
             completedTasks.map(t => React.createElement(TaskRow, { key: t.id + t._key, t }))
           ),
