@@ -484,6 +484,11 @@
 
       const handleApprove = async (sub) => {
         await saveSubmission({ ...sub, status: "approved", approvedAt: new Date().toISOString(), approvedBy: user.name });
+        // Auto-move lead to "estimate_approved" in project sales
+        if (sub.leadId && setSalesLeads) {
+          const totalPrice = sub.totalPrice || sub.results?.reduce((s, r) => s + r.totalPrice, 0) || 0;
+          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "estimate_approved", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "stage_change", text: `Estimate approved ($${totalPrice.toLocaleString()}) — moved to Estimate Approved`, by: user.name, at: new Date().toISOString() }] } : l));
+        }
         await refresh();
       };
 
@@ -4055,9 +4060,29 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const ct = contacts.find(c => c.id === lead.contactId);
       const [activeTab, setActiveTab] = useState("details");
       const [newNote, setNewNote] = useState("");
+      const [newEmailSubject, setNewEmailSubject] = useState("");
+      const [newEmailBody, setNewEmailBody] = useState("");
+      const [showEmailForm, setShowEmailForm] = useState(false);
       const currentStage = SALES_STAGES.find(s => s.id === lead.stage);
       const handleAddNote = () => { if (!newNote.trim()) return; onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] }); setNewNote(""); };
       const handleSetAction = (a) => onUpdate(lead.id, { nextAction: a, activities: [...(lead.activities || []), { type: "action", text: `Next: ${a}`, by: user.name, at: new Date().toISOString() }] });
+      const handleLogEmail = () => {
+        if (!newEmailSubject.trim()) return;
+        const emailEntry = { id: generateId(), subject: newEmailSubject.trim(), body: newEmailBody.trim(), to: ct?.email || "", by: user.name, at: new Date().toISOString() };
+        onUpdate(lead.id, { emailLog: [...(lead.emailLog || []), emailEntry], activities: [...(lead.activities || []), { type: "email", text: `Email logged: ${newEmailSubject.trim()}`, by: user.name, at: new Date().toISOString() }] });
+        setNewEmailSubject(""); setNewEmailBody(""); setShowEmailForm(false);
+      };
+      // Suggested next actions based on current stage
+      const suggestedActions = {
+        new_lead: ["Schedule appointment", "Send intro email", "Research property"],
+        appointment_scheduled: ["Confirm appointment", "Prepare inspection checklist", "Send reminder"],
+        inspected: ["Send to estimating", "Follow up on findings", "Request additional info"],
+        being_estimated: ["Check estimate status", "Request update from estimator"],
+        estimate_approved: ["Send proposal to client", "Schedule presentation meeting"],
+        proposal_sent: ["Follow up on proposal", "Schedule negotiation call", "Send comparison"],
+        negotiation: ["Revise proposal", "Schedule final meeting", "Send revised terms"],
+        awarded: ["Kick off production", "Send contract", "Schedule start date"],
+      };
 
       return (
         <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={onClose}>
@@ -4079,8 +4104,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
             <div style={{ padding: "10px 24px", borderBottom: `1px solid ${C.gray200}`, display: "flex", gap: 3, overflowX: "auto" }}>
               {SALES_STAGES.map(s => <button key={s.id} onClick={() => onStageChange(lead.id, s.id)} style={{ padding: "5px 10px", borderRadius: 5, border: lead.stage === s.id ? `2px solid ${s.color}` : `1px solid ${C.gray200}`, background: lead.stage === s.id ? s.color + "15" : C.white, color: lead.stage === s.id ? s.color : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s.label}</button>)}
             </div>
-            <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}` }}>
-              {[{ id: "details", label: "Details" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}` }}>{t.label}</button>)}
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}`, overflowX: "auto" }}>
+              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
             </div>
             <div style={{ padding: "20px 24px" }}>
               {activeTab === "details" && (
@@ -4114,6 +4139,55 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   {lead.notes && <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{lead.notes}</div>}
                 </div>
               )}
+              {activeTab === "emails" && (<div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: C.navy, margin: 0 }}>Email Communications</h4>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setShowEmailForm(!showEmailForm)} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>📝 Log Email</button>
+                    {(ct?.email) && <button onClick={() => { window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}&su=${encodeURIComponent(`Colony Roofers — ${co?.name || ""}`)}`, "_blank"); }} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>📧 Compose in Gmail</button>}
+                  </div>
+                </div>
+                {showEmailForm && <div style={{ padding: 16, borderRadius: 10, border: `1px solid ${C.gray200}`, background: C.gray50, marginBottom: 16, display: "grid", gap: 10 }}>
+                  <input value={newEmailSubject} onChange={e => setNewEmailSubject(e.target.value)} placeholder="Email subject..." style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" }} />
+                  <textarea value={newEmailBody} onChange={e => setNewEmailBody(e.target.value)} placeholder="Email summary or paste body..." rows={3} style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button onClick={() => { setShowEmailForm(false); setNewEmailSubject(""); setNewEmailBody(""); }} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={handleLogEmail} disabled={!newEmailSubject.trim()} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: newEmailSubject.trim() ? C.navy : C.gray200, color: newEmailSubject.trim() ? C.white : C.gray400, fontSize: 11, fontWeight: 600, cursor: newEmailSubject.trim() ? "pointer" : "default" }}>Log Email</button>
+                  </div>
+                </div>}
+                {(lead.emailLog || []).length > 0 ? (lead.emailLog || []).slice().reverse().map(em => (
+                  <div key={em.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.white }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{em.subject}</div>
+                      <div style={{ fontSize: 10, color: C.gray400 }}>{new Date(em.at).toLocaleString()}</div>
+                    </div>
+                    {em.to && <div style={{ fontSize: 11, color: C.gray500, marginBottom: 4 }}>To: {em.to}</div>}
+                    {em.body && <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{em.body}</div>}
+                    <div style={{ fontSize: 10, color: C.gray400, marginTop: 4 }}>Logged by {em.by}</div>
+                  </div>
+                )) : <div style={{ padding: 32, textAlign: "center", background: C.gray50, borderRadius: 8 }}><div style={{ fontSize: 28, opacity: 0.2, marginBottom: 8 }}>📧</div><p style={{ fontSize: 12, color: C.gray400 }}>No emails logged yet</p></div>}
+              </div>)}
+              {activeTab === "estimates" && (<div>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Estimates for this Job</h4>
+                {(() => {
+                  const subs = JSON.parse(localStorage.getItem("estimate_submissions") || "[]").filter(s => s.leadId === lead.id);
+                  if (subs.length === 0) return <div style={{ padding: 32, textAlign: "center", background: C.gray50, borderRadius: 8 }}><div style={{ fontSize: 28, opacity: 0.2, marginBottom: 8 }}>📐</div><p style={{ fontSize: 12, color: C.gray400 }}>No estimates yet{lead.stage === "being_estimated" ? " — estimates will appear here once submitted" : ""}</p></div>;
+                  return subs.map(s => (
+                    <div key={s.id} style={{ padding: "14px 16px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.white }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{formatCurrency(s.totalPrice || 0)}</div>
+                        <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: { pending: C.yellowBg, approved: C.greenBg, awarded: C.greenBg + "80", rejected: C.redBg, not_selected: C.gray100 }[s.status] || C.gray100, color: { pending: C.yellow, approved: C.green, awarded: C.green, rejected: C.red, not_selected: C.gray400 }[s.status] || C.gray400 }}>{s.status}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.gray500 }}>
+                        <span>Submitted by {s.submittedBy} · {new Date(s.submittedAt || s.createdAt).toLocaleDateString()}</span>
+                        {s.buildings && <span> · {s.buildings.length} building{s.buildings.length > 1 ? "s" : ""}</span>}
+                        {s.buildings && <span> · {s.buildings.reduce((sum, b) => sum + (b.totalArea || 0), 0).toLocaleString()} SF</span>}
+                      </div>
+                      {s.approvedAt && <div style={{ fontSize: 10, color: C.green, marginTop: 4 }}>Approved {new Date(s.approvedAt).toLocaleDateString()} by {s.approvedBy}</div>}
+                    </div>
+                  ));
+                })()}
+              </div>)}
               {activeTab === "activity" && (<div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
                   <input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note..." style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} />
@@ -4122,8 +4196,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {(lead.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", stage_change: "📋", note: "📝", action: "🎯" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
               </div>)}
               {activeTab === "actions" && (<div style={{ display: "grid", gap: 14 }}>
-                <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Quick Actions</h4>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{["Schedule Meeting", "Send Proposal", "Follow Up", "Site Visit"].map(a => <button key={a} onClick={() => handleSetAction(a)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${lead.nextAction === a ? C.red + "60" : C.gray300}`, background: lead.nextAction === a ? C.redBg : C.white, color: lead.nextAction === a ? C.red : C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{a}</button>)}</div></div>
+                <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Suggested Next Actions</h4>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{(suggestedActions[lead.stage] || ["Follow Up", "Schedule Meeting"]).map(a => <button key={a} onClick={() => handleSetAction(a)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${lead.nextAction === a ? C.red + "60" : C.gray300}`, background: lead.nextAction === a ? C.redBg : C.white, color: lead.nextAction === a ? C.red : C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{a}</button>)}</div></div>
                 {(ct?.email || lead.contactEmail) && <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Email</h4>
                 <button onClick={() => { const email = ct?.email || lead.contactEmail; const name = ct?.name || lead.contactName; window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(email)}&su=${encodeURIComponent(`Colony Roofers — ${co?.name || lead.company}`)}&body=${encodeURIComponent(`Hey ${(name || "").split(" ")[0]},\n\nHope all is well.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`)}`, "_blank"); onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "email", text: `Email drafted to ${email}`, by: user.name, at: new Date().toISOString() }] }); }} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>📧 Open in Gmail</button></div>}
                 {lead.stage === "awarded" && <div style={{ padding: "16px", borderRadius: 10, border: `2px solid ${C.green}40`, background: C.greenBg + "40" }}><h4 style={{ fontSize: 13, fontWeight: 700, color: C.green, margin: "0 0 6px" }}>Awarded — Moving to Production</h4><p style={{ fontSize: 12, color: C.gray600, margin: "0 0 8px" }}>This project has been awarded and will appear on the Production board.</p></div>}
