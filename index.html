@@ -5451,6 +5451,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const toggleTask = (id) => setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t));
       const removeTask = (id) => setTasks(prev => prev.filter(t => t.id !== id));
+      const [editingTask, setEditingTask] = useState(null);
+      const [editTitle, setEditTitle] = useState("");
+      const [editDue, setEditDue] = useState("");
+      const [editAssignee, setEditAssignee] = useState("");
+      const openEditTask = (t) => { setEditingTask(t.id); setEditTitle(t.title); setEditDue(t.dueDate || ""); setEditAssignee(t.assignee || ""); };
+      const saveEditTask = () => { if (!editTitle.trim()) return; setTasks(prev => prev.map(t => t.id === editingTask ? { ...t, title: editTitle.trim(), dueDate: editDue || null, assignee: editAssignee } : t)); setEditingTask(null); };
+      const cancelEditTask = () => setEditingTask(null);
 
       const pending = tasks.filter(t => !t.completed).sort((a, b) => { if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate); if (a.dueDate) return -1; if (b.dueDate) return 1; return 0; });
       const completed = tasks.filter(t => t.completed);
@@ -5470,14 +5477,27 @@ Extract every identifiable expense. Use the most specific category possible. If 
           </div>
           {/* Pending tasks */}
           {pending.length === 0 && <div style={{ padding: 12, textAlign: "center", color: C.gray400, fontSize: 11 }}>No open tasks</div>}
-          {pending.map(t => (
+          {pending.map(t => editingTask === t.id ? (
+            <div key={t.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                <input value={editTitle} onChange={e => setEditTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && saveEditTask()} autoFocus style={{ flex: 1, minWidth: 180, padding: "7px 10px", border: `1px solid ${C.blue}`, borderRadius: 6, fontSize: 12, color: C.navy, outline: "none" }} />
+                <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, width: 120 }} />
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <select value={editAssignee} onChange={e => setEditAssignee(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, flex: 1, maxWidth: 180 }}>{activeUsers.length > 0 ? activeUsers.map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${ROLE_PRESETS[u.role]?.label || u.role})` : ""}</option>) : <option value={user?.name || ""}>{user?.name || "Me"}</option>}</select>
+                <button onClick={saveEditTask} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.green, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Save</button>
+                <button onClick={cancelEditTask} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray500, fontSize: 11, cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.gray100}` }}>
               <input type="checkbox" checked={false} onChange={() => toggleTask(t.id)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.green }} />
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, cursor: "pointer" }} onClick={() => openEditTask(t)} title="Click to edit">
                 <span style={{ fontSize: 12, color: C.navy }}>{t.title}</span>
                 {t.assignee && <span style={{ fontSize: 10, color: C.gray400, marginLeft: 6 }}>→ {t.assignee}</span>}
               </div>
               {t.dueDate && <span style={{ fontSize: 10, color: new Date(t.dueDate) < new Date() ? C.red : C.gray400, fontWeight: 600 }}>{new Date(t.dueDate).toLocaleDateString()}</span>}
+              <button onClick={() => openEditTask(t)} style={{ background: "none", border: "none", color: C.gray400, cursor: "pointer", fontSize: 11, padding: "0 4px" }} title="Edit task">✏</button>
               <button onClick={() => removeTask(t.id)} style={{ background: "none", border: "none", color: C.gray300, cursor: "pointer", fontSize: 14, padding: "0 4px" }}>×</button>
             </div>
           ))}
@@ -6240,10 +6260,32 @@ Extract every identifiable expense. Use the most specific category possible. If 
       // Active service tickets
       const myTickets = (serviceTickets || []).filter(t => (t.assignedTo === user.name || t.createdBy === user.name) && !["Complete", "Closed"].includes(t.status));
 
+      const [ddEditTask, setDdEditTask] = useState(null);
+      const [ddEditTitle, setDdEditTitle] = useState("");
+      const [ddEditDue, setDdEditDue] = useState("");
+      const [ddEditAssignee, setDdEditAssignee] = useState("");
+      const ddActiveUsers = (crmUsers || []).filter(u => u.active !== false);
+      const openDdEdit = (t) => { setDdEditTask(t); setDdEditTitle(t.title); setDdEditDue(t.dueDate || ""); setDdEditAssignee(t.assignee || ""); };
+      const saveDdEdit = () => {
+        if (!ddEditTitle.trim() || !ddEditTask) return;
+        const collKey = `cr_tasks_${ddEditTask.source}`;
+        try {
+          const existing = JSON.parse(localStorage.getItem(collKey) || "[]");
+          const updated = existing.map(t => t.id === ddEditTask.id ? { ...t, title: ddEditTitle.trim(), dueDate: ddEditDue || null, assignee: ddEditAssignee } : t);
+          localStorage.setItem(collKey, JSON.stringify(updated));
+          if (firestoreDb) { firestoreDb.collection("kv").doc(collKey).set({ value: JSON.stringify(updated) }); }
+        } catch(ex) {}
+        setDdEditTask(null);
+        window.location.reload();
+      };
+      const cancelDdEdit = () => setDdEditTask(null);
+
       const TaskRow = ({ t }) => (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.gray100}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.gray100}`, cursor: "pointer" }} onClick={() => openDdEdit(t)} title="Click to edit">
           <span style={{ fontSize: 12, color: C.navy, flex: 1 }}>{t.title}</span>
+          {t.assignee && <span style={{ fontSize: 10, color: C.gray400, marginRight: 6 }}>→ {t.assignee}</span>}
           {t.dueDate && <span style={{ fontSize: 10, fontWeight: 600, color: t.dueDate < today ? C.red : t.dueDate === today ? C.yellow : C.gray400 }}>{new Date(t.dueDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>}
+          <span style={{ fontSize: 11, color: C.gray400, marginLeft: 4 }}>✏</span>
         </div>
       );
 
@@ -6409,6 +6451,35 @@ Extract every identifiable expense. Use the most specific category possible. If 
               </div>
             )}
           </div>
+
+          {/* Task Edit Modal */}
+          {ddEditTask && (
+            <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.4)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={cancelDdEdit}>
+              <div style={{ background: C.white, borderRadius: 12, padding: 24, width: 420, maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Edit Task</h3>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4 }}>Task Title</label>
+                  <input value={ddEditTitle} onChange={e => setDdEditTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && saveDdEdit()} autoFocus style={{ width: "100%", padding: "9px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, boxSizing: "border-box" }} />
+                </div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4 }}>Due Date</label>
+                    <input type="date" value={ddEditDue} onChange={e => setDdEditDue(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.gray600, boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4 }}>Assignee</label>
+                    <select value={ddEditAssignee} onChange={e => setDdEditAssignee(e.target.value)} style={{ width: "100%", padding: "9px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.gray600, boxSizing: "border-box" }}>
+                      {ddActiveUsers.length > 0 ? ddActiveUsers.map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${ROLE_PRESETS[u.role]?.label || u.role})` : ""}</option>) : <option value={user?.name || ""}>{user?.name || "Me"}</option>}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+                  <button onClick={cancelDdEdit} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray500, fontSize: 12, cursor: "pointer" }}>Cancel</button>
+                  <button onClick={saveDdEdit} style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: C.green, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Save Changes</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
