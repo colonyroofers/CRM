@@ -331,12 +331,18 @@
     }
 
     // ─── FULL INLINE ESTIMATING MODULE ───────────────────────────
+    // ─── ESTIMATOR LIST ─────────────────────────────────────────
+    const ESTIMATORS = [
+      { name: "Joseph", email: "joseph@colonyroofers.com" },
+      { name: "J. Garside", email: "jgarside@colonyroofers.com" },
+      { name: "Zach Reece", email: "zach@colonyroofers.com" },
+    ];
+
     function EstimatingModule({ user, role, entities, salesLeads, setSalesLeads }) {
       const { companies, properties, contacts } = entities || {};
-      const [mode, setMode] = useState("submissions"); // "submissions" | "new"
+      const [view, setView] = useState("kanban"); // "kanban" | "new" | "submissions"
       const [submissions, setSubmissions] = useState([]);
       const [loading, setLoading] = useState(true);
-      const [selectedSub, setSelectedSub] = useState(null);
 
       // New estimate state
       const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -345,71 +351,82 @@
       const [labor, setLab] = useState({ ...DEFAULT_LABOR });
       const [equipment, setEquip] = useState({ ...DEFAULT_EQUIPMENT });
       const [financials, setFin] = useState({ ...DEFAULT_FINANCIALS });
-      const [step, setStep] = useState(1); // 1=select job, 2=buildings, 3=pricing, 4=review
+      const [step, setStep] = useState(1);
       const [saving, setSaving] = useState(false);
       const [showEmail, setShowEmail] = useState(null);
       const [roofRProcessing, setRoofRProcessing] = useState(false);
       const [roofRError, setRoofRError] = useState(null);
       const roofRInputRef = useRef(null);
-      const [showAwardPicker, setShowAwardPicker] = useState(null); // leadId for multi-estimate pick
+      const [showAwardPicker, setShowAwardPicker] = useState(null);
+      const [filter, setFilter] = useState("all");
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
       const refresh = async () => { setLoading(true); const s = await loadAllSubmissions(); setSubmissions(s); setLoading(false); };
 
-      const counts = { all: submissions.length, pending: submissions.filter(s => s.status === "pending").length, approved: submissions.filter(s => s.status === "approved").length, awarded: submissions.filter(s => s.status === "awarded").length };
-      const [filter, setFilter] = useState("all");
-      const filtered = filter === "all" ? submissions : submissions.filter(s => s.status === filter);
+      // ── Kanban data ──────────────────────────────────────────
+      const estimatingJobs = (salesLeads || []).filter(l => l.stage === "being_estimated");
+      const estimatesForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status !== "rejected" && s.status !== "not_selected");
+      const approvedForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "approved");
+      const pendingForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "pending");
 
-      // Available jobs = sales leads not yet awarded
-      const availableJobs = (salesLeads || []).filter(l => l.stage !== "closed_lost");
+      const kanbanCols = [
+        { id: "unassigned", label: "Unassigned", color: "#94A3B8", jobs: estimatingJobs.filter(j => !j.estimator) },
+        { id: "assigned", label: "Assigned", color: "#6366F1", jobs: estimatingJobs.filter(j => j.estimator && estimatesForLead(j.id).length === 0) },
+        { id: "in_progress", label: "Estimating", color: "#F59E0B", jobs: estimatingJobs.filter(j => j.estimator && pendingForLead(j.id).length > 0 && approvedForLead(j.id).length === 0) },
+        { id: "approved", label: "Approved", color: "#10B981", jobs: estimatingJobs.filter(j => approvedForLead(j.id).length > 0) },
+      ];
+
+      const handleAssignEstimator = (leadId, estimatorName) => {
+        setSalesLeads(prev => prev.map(l => l.id === leadId ? { ...l, estimator: estimatorName, activities: [...(l.activities || []), { type: "assigned", text: `Assigned to estimator: ${estimatorName}`, by: user.name, at: new Date().toISOString() }] } : l));
+      };
+
+      const startEstimate = (leadId) => {
+        setSelectedLeadId(leadId);
+        setStep(1);
+        setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]);
+        setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
+        setView("new");
+      };
+
+      // ── Submissions data ─────────────────────────────────────
+      const counts = { all: submissions.length, pending: submissions.filter(s => s.status === "pending").length, approved: submissions.filter(s => s.status === "approved").length, awarded: submissions.filter(s => s.status === "awarded").length };
+      const filteredSubs = filter === "all" ? submissions : submissions.filter(s => s.status === filter);
+
+      // Available jobs for estimate creation
+      const availableJobs = (salesLeads || []).filter(l => l.stage === "being_estimated");
       const selectedLead = availableJobs.find(l => l.id === selectedLeadId);
       const leadCompany = selectedLead ? (companies || []).find(c => c.id === selectedLead.companyId) : null;
       const leadProperty = selectedLead ? (properties || []).find(p => p.id === selectedLead.propertyId) : null;
       const leadContact = selectedLead ? (contacts || []).find(c => c.id === selectedLead.contactId) : null;
 
-      // Calculations (live)
+      // Calculations
       const results = calcAllBuildings(buildings, materials, labor, equipment, financials);
       const grandTotal = results.reduce((s, r) => s + r.totalPrice, 0);
       const totalSq = buildings.reduce((s, b) => s + b.totalArea, 0);
 
-      // Count estimates per lead
-      const estimatesForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status !== "rejected");
-
       const handleAward = async (sub) => {
-        // Check if this lead has multiple approved estimates
         const leadEstimates = submissions.filter(s => s.leadId === sub.leadId && s.status === "approved");
-        if (leadEstimates.length > 1) {
-          setShowAwardPicker(sub.leadId);
-          return;
-        }
+        if (leadEstimates.length > 1) { setShowAwardPicker(sub.leadId); return; }
         await doAward(sub);
       };
 
       const doAward = async (sub) => {
-        if (!confirm(`Award "${sub.project?.jobName || sub.leadName}" and move to Production?`)) return;
-        // Update submission status
+        if (!confirm(`Award "${sub.leadName || sub.project?.jobName}" and move to Production?`)) return;
         const updated = { ...sub, status: "awarded", awardedAt: new Date().toISOString(), awardedBy: user.name };
         await saveSubmission(updated);
-
-        // Mark other estimates for this lead as not-selected
         for (const other of submissions.filter(s => s.leadId === sub.leadId && s.id !== sub.id && s.status === "approved")) {
           await saveSubmission({ ...other, status: "not_selected" });
         }
-
-        // Build production project with budget from estimate
         const totalPrice = sub.totalPrice || sub.results?.reduce((s, r) => s + r.totalPrice, 0) || 0;
         const totalMat = sub.results?.reduce((s, r) => s + r.materialCost, 0) || 0;
         const totalLab = sub.results?.reduce((s, r) => s + r.laborCost, 0) || 0;
         const totalTax = sub.results?.reduce((s, r) => s + r.materialTax, 0) || 0;
         const estimatedCost = totalMat + totalLab + totalTax;
         const margin = totalPrice > 0 ? Math.round(((totalPrice - estimatedCost) / totalPrice) * 100) : 0;
-
         const newProject = {
-          id: generateId(), name: sub.project?.jobName || sub.leadName || "Untitled",
-          client: sub.project?.companyName || leadCompany?.name || "",
-          address: leadProperty?.address || sub.project?.address || "",
-          market: sub.project?.market === "atlanta" ? "ATL" : sub.project?.market === "tampa" ? "TPA" : sub.project?.market === "dallas" ? "DFW" : sub.market || "ATL",
-          status: "Pre-Construction", roofType: "Asphalt Shingles",
+          id: generateId(), name: sub.leadName || sub.project?.jobName || "Untitled",
+          client: sub.project?.companyName || "", address: sub.project?.address || "",
+          market: sub.market || "ATL", status: "Pre-Construction", roofType: "Asphalt Shingles",
           sqft: sub.buildings?.reduce((s, b) => s + (b.totalArea || 0), 0) || 0,
           contractValue: totalPrice, estimatedCost, estimatedMargin: margin, currentCost: 0, currentMargin: margin,
           assignedSuper: "", buildings: sub.buildings?.length || 1, progress: 0,
@@ -420,19 +437,19 @@
             { id: generateId(), description: "Materials", amount: totalMat, category: "Materials" },
             { id: generateId(), description: "Labor & Equipment", amount: totalLab, category: "Labor" },
             { id: generateId(), description: "Material Tax", amount: totalTax, category: "Other" },
-            ...(sub.results || []).map((r, i) => ({ id: generateId(), description: `Bldg ${i + 1} — Margin`, amount: r.marginAmt || 0, category: "Margin" })),
           ],
         };
         try { const existing = JSON.parse(localStorage.getItem("cr_production_projects") || "[]"); existing.unshift(newProject); localStorage.setItem("cr_production_projects", JSON.stringify(existing)); if (firestoreDb) await firestoreDb.collection("cr_production_projects").doc("data").set({ items: existing, updatedAt: new Date().toISOString() }); } catch (e) {}
-
-        // Move the sales lead to closed_won
         if (sub.leadId && setSalesLeads) {
-          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "closed_won", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "awarded", text: `Awarded — estimate ${sub.id} selected, moved to Production`, by: user.name, at: new Date().toISOString() }] } : l));
+          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "closed_won", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "awarded", text: `Awarded — moved to Production with budget`, by: user.name, at: new Date().toISOString() }] } : l));
         }
+        await refresh(); setShowAwardPicker(null);
+        alert(`"${newProject.name}" awarded and added to Production!`);
+      };
 
+      const handleApprove = async (sub) => {
+        await saveSubmission({ ...sub, status: "approved", approvedAt: new Date().toISOString(), approvedBy: user.name });
         await refresh();
-        setShowAwardPicker(null);
-        alert(`"${newProject.name}" awarded and added to Production with budget!`);
       };
 
       const handleSubmitEstimate = async () => {
@@ -441,160 +458,160 @@
         const lead = availableJobs.find(l => l.id === selectedLeadId);
         const co = lead ? (companies || []).find(c => c.id === lead.companyId) : null;
         const pr = lead ? (properties || []).find(p => p.id === lead.propertyId) : null;
-        const project = {
-          jobName: co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof",
-          companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas",
-        };
-        const data = {
-          project, buildings, materials, labor, equipment, financials, results,
-          totalPrice: grandTotal, status: "pending", submittedBy: user.name,
-          leadId: selectedLeadId, leadName: project.jobName,
-          companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId,
-          market: lead?.market,
-        };
+        const project = { jobName: co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof", companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas" };
+        const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market };
         const saved = await saveSubmission(data);
         if (saved) {
-          // Log activity on the lead
-          if (setSalesLeads) {
-            setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`, by: user.name, at: new Date().toISOString() }] } : l));
-          }
-          await refresh(); setMode("submissions"); setStep(1); setSelectedLeadId("");
+          if (setSalesLeads) { setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`, by: user.name, at: new Date().toISOString() }] } : l)); }
+          await refresh(); setView("kanban"); setStep(1); setSelectedLeadId("");
           setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]); setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
         }
         setSaving(false);
-      };
-
-      const handleApprove = async (sub) => {
-        const updated = { ...sub, status: "approved", approvedAt: new Date().toISOString(), approvedBy: user.name };
-        await saveSubmission(updated);
-        await refresh();
       };
 
       const addBuilding = () => setBuildings(prev => [...prev, { ...EMPTY_BUILDING, id: "b" + (prev.length + 1) }]);
       const updateBuilding = (idx, field, value) => { const u = [...buildings]; u[idx] = { ...u[idx], [field]: typeof value === "string" && !isNaN(value) && field !== "siteplanNum" && field !== "roofrNum" && field !== "predominantPitch" ? Number(value) : value }; setBuildings(u); };
       const removeBuilding = (idx) => { if (buildings.length <= 1) return; setBuildings(prev => prev.filter((_, i) => i !== idx)); };
 
-      // RoofR report upload and AI parsing
+      // RoofR upload handler (unchanged)
       const handleRoofRUpload = async (file) => {
         if (!file) return;
         setRoofRProcessing(true); setRoofRError(null);
         try {
-          const fileData = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = e => resolve(e.target.result);
-            reader.onerror = () => reject(new Error("File read failed"));
-            reader.readAsDataURL(file);
-          });
+          const fileData = await new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = () => rej(new Error("Read failed")); r.readAsDataURL(file); });
           const base64Data = fileData.split(",")[1];
           const mediaType = file.type || "application/pdf";
           const isExcel = mediaType.includes("spreadsheet") || mediaType.includes("excel") || file.name.match(/\.(xlsx|xls|csv)$/i);
-
           let contentParts = [];
           if (isExcel) {
-            const binaryStr = atob(base64Data);
-            const bytes = new Uint8Array(binaryStr.length);
-            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-            const workbook = XLSX.read(bytes, { type: "array" });
-            let csvText = "";
-            workbook.SheetNames.forEach(sheetName => { csvText += "=== Sheet: " + sheetName + " ===\n" + XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]) + "\n\n"; });
+            const binaryStr = atob(base64Data); const bytes = new Uint8Array(binaryStr.length); for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+            const workbook = XLSX.read(bytes, { type: "array" }); let csvText = ""; workbook.SheetNames.forEach(sn => { csvText += "=== Sheet: " + sn + " ===\n" + XLSX.utils.sheet_to_csv(workbook.Sheets[sn]) + "\n\n"; });
             if (csvText.length > 40000) csvText = csvText.substring(0, 40000) + "\n...[truncated]";
             contentParts.push({ type: "text", text: "[RoofR Report: " + file.name + "]\n\n" + csvText });
           } else if (mediaType === "application/pdf") {
             if (file.size > 2000000 && window.pdfjsLib) {
-              const binaryStr = atob(base64Data);
-              const bytes = new Uint8Array(binaryStr.length);
-              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-              let fullText = "";
+              const binaryStr = atob(base64Data); const bytes = new Uint8Array(binaryStr.length); for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              const pdf = await pdfjsLib.getDocument({ data: bytes }).promise; let fullText = "";
               for (let p = 1; p <= pdf.numPages; p++) { const page = await pdf.getPage(p); const tc = await page.getTextContent(); fullText += "=== Page " + p + " ===\n" + tc.items.map(i => i.str).join(" ") + "\n\n"; }
               if (fullText.length > 40000) fullText = fullText.substring(0, 40000) + "\n...[truncated]";
-              contentParts.push({ type: "text", text: "[RoofR Report PDF text: " + file.name + "]\n\n" + fullText });
-            } else {
-              contentParts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } });
-              contentParts.push({ type: "text", text: "[RoofR Report: " + file.name + "]" });
-            }
-          } else {
-            contentParts.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } });
-            contentParts.push({ type: "text", text: "[RoofR Report image: " + file.name + "]" });
-          }
-
-          contentParts.push({ type: "text", text: `You are a roofing estimating assistant for Colony Roofers. Parse this RoofR roof measurement report and extract building measurements.
-
-Return ONLY valid JSON (no markdown fences) as an array of buildings:
-[{
-  "siteplanNum": "Building identifier from the report",
-  "roofrNum": "RoofR report/order number if visible",
-  "totalArea": <total roof area in sq ft>,
-  "pitchedArea": <pitched area sq ft or 0>,
-  "flatArea": <flat area sq ft or 0>,
-  "predominantPitch": "<pitch as X/12, e.g. 5/12>",
-  "eaves": <eaves linear feet>,
-  "valleys": <valleys linear feet>,
-  "hips": <hips linear feet>,
-  "ridges": <ridges linear feet>,
-  "rakes": <rakes linear feet>,
-  "wallFlashing": <wall flashing linear feet or 0>,
-  "stepFlashing": <step flashing linear feet or 0>,
-  "pipes": <number of pipe penetrations>,
-  "phase": 1
-}]
-
-Extract ALL buildings from the report. Use 0 for any measurement not found. For predominantPitch, use the most common pitch if multiple are listed. totalArea should be the TOTAL roof area including waste-relevant sections. Parse linear measurements carefully — they are critical for accurate pricing.` });
-
-          const response = await fetch("/api/ai", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: contentParts }] }),
-          });
-          if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || "API error " + response.status); }
+              contentParts.push({ type: "text", text: "[RoofR Report PDF: " + file.name + "]\n\n" + fullText });
+            } else { contentParts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } }); contentParts.push({ type: "text", text: "[RoofR Report: " + file.name + "]" }); }
+          } else { contentParts.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } }); contentParts.push({ type: "text", text: "[RoofR Report image: " + file.name + "]" }); }
+          contentParts.push({ type: "text", text: `Parse this RoofR roof measurement report. Return ONLY valid JSON (no markdown) as an array of buildings: [{"siteplanNum":"","roofrNum":"","totalArea":0,"pitchedArea":0,"flatArea":0,"predominantPitch":"5/12","eaves":0,"valleys":0,"hips":0,"ridges":0,"rakes":0,"wallFlashing":0,"stepFlashing":0,"pipes":0,"phase":1}]. Use 0 for missing values.` });
+          const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: contentParts }] }) });
+          if (!response.ok) throw new Error("API error " + response.status);
           const result = await response.json();
           const text = result.content?.find(c => c.type === "text")?.text || "";
-          const cleaned = text.replace(/```json|```/g, "").trim();
-          const parsed = JSON.parse(cleaned);
+          const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
           const arr = Array.isArray(parsed) ? parsed : [parsed];
-
-          if (arr.length === 0) throw new Error("No buildings found in report");
-
-          const newBuildings = arr.map((b, i) => ({
-            ...EMPTY_BUILDING,
-            id: "rb" + (i + 1) + "_" + Date.now(),
-            siteplanNum: b.siteplanNum || b.buildingName || ("Bldg " + (i + 1)),
-            roofrNum: b.roofrNum || b.reportNumber || "",
-            totalArea: Number(b.totalArea) || 0,
-            pitchedArea: Number(b.pitchedArea) || 0,
-            flatArea: Number(b.flatArea) || 0,
-            predominantPitch: b.predominantPitch || "5/12",
-            eaves: Number(b.eaves) || 0,
-            valleys: Number(b.valleys) || 0,
-            hips: Number(b.hips) || 0,
-            ridges: Number(b.ridges) || 0,
-            rakes: Number(b.rakes) || 0,
-            wallFlashing: Number(b.wallFlashing) || 0,
-            stepFlashing: Number(b.stepFlashing) || 0,
-            pipes: Number(b.pipes) || 0,
-            phase: Number(b.phase) || 1,
-          }));
-
-          setBuildings(newBuildings);
-        } catch (err) {
-          console.error("RoofR parse error:", err);
-          setRoofRError("Failed to parse RoofR report: " + (err.message || "Unknown error") + ". You can enter measurements manually below.");
-        } finally { setRoofRProcessing(false); }
+          if (arr.length === 0) throw new Error("No buildings found");
+          setBuildings(arr.map((b, i) => ({ ...EMPTY_BUILDING, id: "rb" + i + "_" + Date.now(), siteplanNum: b.siteplanNum || "Bldg " + (i + 1), roofrNum: b.roofrNum || "", totalArea: Number(b.totalArea) || 0, pitchedArea: Number(b.pitchedArea) || 0, flatArea: Number(b.flatArea) || 0, predominantPitch: b.predominantPitch || "5/12", eaves: Number(b.eaves) || 0, valleys: Number(b.valleys) || 0, hips: Number(b.hips) || 0, ridges: Number(b.ridges) || 0, rakes: Number(b.rakes) || 0, wallFlashing: Number(b.wallFlashing) || 0, stepFlashing: Number(b.stepFlashing) || 0, pipes: Number(b.pipes) || 0, phase: Number(b.phase) || 1 })));
+        } catch (err) { setRoofRError("Failed to parse: " + (err.message || "Unknown error")); } finally { setRoofRProcessing(false); }
       };
 
       const fs = { width: "100%", padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
       const numFs = { ...fs, textAlign: "right", width: 90 };
 
-      // ── NEW ESTIMATE WIZARD ──────────────────────────────────
-      if (mode === "new") {
+      // ════════════════════════════════════════════════════════════
+      // KANBAN VIEW — Primary view showing jobs being estimated
+      // ════════════════════════════════════════════════════════════
+      if (view === "kanban") {
+        return (
+          <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
+            <div style={{ maxWidth: 1400, margin: "0 auto", padding: "28px 32px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                <div><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Estimating</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Jobs being estimated — assign, build estimates, approve & award</p></div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setView("submissions")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", color: C.gray600 }}>📋 All Estimates ({submissions.length})</button>
+                  <button onClick={refresh} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", color: C.gray600 }}>Refresh</button>
+                </div>
+              </div>
+
+              {estimatingJobs.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 48, background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
+                  <div style={{ fontSize: 48, opacity: 0.15, marginBottom: 12 }}>📐</div>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: C.navy, margin: "0 0 4px" }}>No jobs being estimated</p>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Move a job to "Being Estimated" in Project Sales to see it here.</p>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, alignItems: "flex-start" }}>
+                  {kanbanCols.map(col => (
+                    <div key={col.id} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
+                      <div style={{ padding: "12px 16px", borderBottom: `2px solid ${col.color}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{col.label}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 10, background: col.color + "18", color: col.color, fontSize: 11, fontWeight: 700 }}>{col.jobs.length}</span>
+                      </div>
+                      <div style={{ padding: "12px", minHeight: 80, display: "flex", flexDirection: "column", gap: 8 }}>
+                        {col.jobs.map(job => {
+                          const co = (companies || []).find(c => c.id === job.companyId);
+                          const pr = (properties || []).find(p => p.id === job.propertyId);
+                          const ests = estimatesForLead(job.id);
+                          const approved = approvedForLead(job.id);
+                          return (
+                            <div key={job.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer" }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>{co?.name || job.company || "—"}</div>
+                              <div style={{ fontSize: 11, color: C.gray500, marginBottom: 8 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
+                              {/* Estimator assignment */}
+                              <div style={{ marginBottom: 8 }}>
+                                <select value={job.estimator || ""} onChange={e => { e.stopPropagation(); handleAssignEstimator(job.id, e.target.value); }}
+                                  style={{ width: "100%", padding: "6px 8px", border: `1px solid ${job.estimator ? C.green + "60" : C.red + "40"}`, borderRadius: 6, fontSize: 11, color: C.navy, outline: "none", background: job.estimator ? C.greenBg + "40" : C.white }}>
+                                  <option value="">— Assign estimator —</option>
+                                  {ESTIMATORS.map(e => <option key={e.email} value={e.name}>{e.name}</option>)}
+                                </select>
+                              </div>
+                              {/* Estimate count + actions */}
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ display: "flex", gap: 4 }}>
+                                  {ests.length > 0 && <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.navy + "15", color: C.navy }}>{ests.length} est</span>}
+                                  {approved.length > 0 && <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.greenBg, color: C.green }}>✓ Approved</span>}
+                                  <MarketTag market={job.market} />
+                                </div>
+                                <button onClick={() => startEstimate(job.id)} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.red, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{ests.length > 0 ? "+ Add" : "Create"}</button>
+                              </div>
+                              {ests.length > 0 && <div style={{ marginTop: 8, borderTop: `1px solid ${C.gray100}`, paddingTop: 6 }}>
+                                {ests.slice(0, 3).map(est => (
+                                  <div key={est.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 10 }}>
+                                    <span style={{ color: C.gray600 }}>{est.submittedBy} · {new Date(est.createdAt).toLocaleDateString()}</span>
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                      <span style={{ fontWeight: 700, color: C.navy }}>{fmt(est.totalPrice || 0)}</span>
+                                      {est.status === "pending" && role === "admin" && <button onClick={(e) => { e.stopPropagation(); handleApprove(est); }} style={{ padding: "1px 6px", borderRadius: 4, border: "none", background: C.green, color: C.white, fontSize: 9, fontWeight: 700, cursor: "pointer" }}>✓</button>}
+                                      {est.status === "approved" && <button onClick={(e) => { e.stopPropagation(); handleAward(est); }} style={{ padding: "1px 6px", borderRadius: 4, border: "none", background: C.blue, color: C.white, fontSize: 9, fontWeight: 700, cursor: "pointer" }}>🏆</button>}
+                                      <span style={{ padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 600, background: est.status === "approved" ? C.greenBg : est.status === "awarded" ? C.blueBg : C.yellowBg, color: est.status === "approved" ? C.green : est.status === "awarded" ? C.blue : C.yellow }}>{est.status}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Beam AI placeholder */}
+              <div style={{ marginTop: 32, padding: "24px", borderRadius: 10, border: `2px dashed ${C.gray300}`, textAlign: "center" }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Low-Slope Estimates (Beam AI)</h3>
+                <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Import takeoffs from Beam AI for TPO, single-ply, and modified bitumen projects</p>
+                <button style={{ padding: "10px 24px", borderRadius: 8, border: `1px solid ${C.navy}30`, background: C.navy + "08", color: C.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📥 Import from Beam AI (Coming Soon)</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // NEW ESTIMATE WIZARD
+      // ════════════════════════════════════════════════════════════
+      if (view === "new") {
         return (
           <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>New Estimate — Shingle Replacement</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Step {step} of 4</p></div>
-              <button onClick={() => { setMode("submissions"); setStep(1); }} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>← Back to List</button>
+              <button onClick={() => setView("kanban")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>← Back to Board</button>
             </div>
-
-            {/* Step indicator */}
             <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
               {["Select Job", "Buildings", "Pricing", "Review"].map((s, i) => (
                 <button key={i} onClick={() => setStep(i + 1)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: step === i + 1 ? C.navy : step > i + 1 ? C.green + "20" : C.gray100, color: step === i + 1 ? C.white : step > i + 1 ? C.green : C.gray500, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{i + 1}. {s}</button>
@@ -605,26 +622,17 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
             {step === 1 && (
               <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}` }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Job</h3>
-                <p style={{ fontSize: 12, color: C.gray500, margin: "0 0 16px" }}>Choose a project from Project Sales to create an estimate for. Jobs must be created in Sales first.</p>
-                <div>
-                  <label style={ls}>Job *</label>
-                  <select style={{ ...fs, fontWeight: 600 }} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
-                    <option value="">— Select a job —</option>
-                    {availableJobs.map(l => { const co = (companies || []).find(c => c.id === l.companyId); const pr = (properties || []).find(p => p.id === l.propertyId); const estCount = estimatesForLead(l.id).length; return (<option key={l.id} value={l.id}>{co?.name || l.company || "—"} — {pr?.name || "—"} ({SALES_STAGES.find(s => s.id === l.stage)?.label}){estCount > 0 ? ` [${estCount} est]` : ""}</option>); })}
-                  </select>
-                  {availableJobs.length === 0 && <p style={{ fontSize: 12, color: C.red, margin: "8px 0 0" }}>No jobs found. Create projects in the Sales module first.</p>}
-                </div>
-                {/* Selected job summary */}
+                <p style={{ fontSize: 12, color: C.gray500, margin: "0 0 16px" }}>Choose a job that's in "Being Estimated" status.</p>
+                <select style={{ ...fs, fontWeight: 600 }} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
+                  <option value="">— Select a job —</option>
+                  {availableJobs.map(l => { const co = (companies || []).find(c => c.id === l.companyId); const pr = (properties || []).find(p => p.id === l.propertyId); const estCount = estimatesForLead(l.id).length; return (<option key={l.id} value={l.id}>{co?.name || l.company || "—"} — {pr?.name || "—"}{l.estimator ? ` (${l.estimator})` : ""}{estCount > 0 ? ` [${estCount} est]` : ""}</option>); })}
+                </select>
                 {selectedLead && (
                   <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 10, background: C.greenBg + "40", border: `1px solid ${C.green}40` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{leadCompany?.name || selectedLead.company || "—"}</span>
-                      <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.navy + "18", color: C.navy }}>{SALES_STAGES.find(s => s.id === selectedLead.stage)?.label}</span>
-                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.navy, marginBottom: 4 }}>{leadCompany?.name || selectedLead.company || "—"}</div>
                     {leadProperty && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>🏠 {leadProperty.name} — {leadProperty.address || ""}</div>}
-                    {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || leadContact.phone || ""}</div>}
-                    {selectedLead.market && <div style={{ fontSize: 12, color: C.gray600 }}>📍 {MARKET_LABELS[selectedLead.market] || selectedLead.market}</div>}
-                    {estimatesForLead(selectedLead.id).length > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 11, fontWeight: 600 }}>This job already has {estimatesForLead(selectedLead.id).length} estimate(s)</div>}
+                    {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || ""}</div>}
+                    {selectedLead.estimator && <div style={{ fontSize: 12, color: C.gray600 }}>📐 Estimator: {selectedLead.estimator}</div>}
                   </div>
                 )}
                 <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
@@ -636,45 +644,25 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
             {/* STEP 2: Buildings */}
             {step === 2 && (
               <div>
-                {/* RoofR Upload */}
-                <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, textAlign: "center", transition: "all 0.2s" }}>
+                <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, textAlign: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 10 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ color: C.white, fontSize: 18 }}>📄</span>
-                    </div>
-                    <div style={{ textAlign: "left" }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Import from RoofR Report</div>
-                      <div style={{ fontSize: 12, color: C.gray500 }}>Upload a RoofR PDF or Excel report to auto-fill building measurements</div>
-                    </div>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: C.white, fontSize: 18 }}>📄</span></div>
+                    <div style={{ textAlign: "left" }}><div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Import from RoofR Report</div><div style={{ fontSize: 12, color: C.gray500 }}>Upload a RoofR PDF or Excel to auto-fill measurements</div></div>
                   </div>
-                  {roofRProcessing ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0" }}>
-                      <Spinner size={16} color={C.navy} />
-                      <span style={{ fontSize: 13, color: C.navy, fontWeight: 600 }}>Parsing RoofR report with AI...</span>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                      <button onClick={() => roofRInputRef.current?.click()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{I.upload} Upload RoofR Report</button>
-                      <input ref={roofRInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleRoofRUpload(e.target.files[0]); e.target.value = ""; }} />
-                    </div>
+                  {roofRProcessing ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0" }}><Spinner size={16} color={C.navy} /><span style={{ fontSize: 13, color: C.navy, fontWeight: 600 }}>Parsing RoofR report...</span></div> : (
+                    <div><button onClick={() => roofRInputRef.current?.click()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, margin: "0 auto" }}>{I.upload} Upload RoofR Report</button><input ref={roofRInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleRoofRUpload(e.target.files[0]); e.target.value = ""; }} /></div>
                   )}
                   {roofRError && <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 12, fontWeight: 500, textAlign: "left" }}>{roofRError}</div>}
-                  <p style={{ fontSize: 10, color: C.gray400, margin: "10px 0 0" }}>Accepts PDF, Excel (.xlsx/.xls/.csv), or image files from RoofR</p>
                 </div>
-
-                {/* Building cards */}
                 {buildings.map((b, idx) => (
                   <div key={b.id || idx} style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}`, marginBottom: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                       <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: 0 }}>Building {idx + 1}</h4>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span style={{ fontSize: 11, color: C.gray400 }}>{b.totalArea > 0 ? `${Math.ceil(b.totalArea / 100)} sq` : ""}</span>
-                        {buildings.length > 1 && <button onClick={() => removeBuilding(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button>}
-                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 11, color: C.gray400 }}>{b.totalArea > 0 ? `${Math.ceil(b.totalArea / 100)} sq` : ""}</span>{buildings.length > 1 && <button onClick={() => removeBuilding(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button>}</div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
                       <div><label style={ls}>Siteplan #</label><input style={fs} value={b.siteplanNum} onChange={e => updateBuilding(idx, "siteplanNum", e.target.value)} /></div>
-                      <div><label style={ls}>RoofR #</label><input style={fs} value={b.roofrNum || ""} onChange={e => updateBuilding(idx, "roofrNum", e.target.value)} placeholder="Report #" /></div>
+                      <div><label style={ls}>RoofR #</label><input style={fs} value={b.roofrNum || ""} onChange={e => updateBuilding(idx, "roofrNum", e.target.value)} /></div>
                       <div><label style={ls}>Phase</label><input style={fs} type="number" value={b.phase} onChange={e => updateBuilding(idx, "phase", e.target.value)} /></div>
                       <div><label style={ls}>Pitch</label><select style={fs} value={b.predominantPitch} onChange={e => updateBuilding(idx, "predominantPitch", e.target.value)}>{["4/12", "5/12", "6/12", "7/12", "8/12", "9/12", "10/12", "12/12"].map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                       <div><label style={ls}>Pipes</label><input style={fs} type="number" value={b.pipes} onChange={e => updateBuilding(idx, "pipes", e.target.value)} /></div>
@@ -694,10 +682,7 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
                 ))}
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 12 }}>
                   <button onClick={addBuilding} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{I.plus} Add Building</button>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => setStep(1)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-                    <button onClick={() => setStep(3)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Pricing</button>
-                  </div>
+                  <div style={{ display: "flex", gap: 8 }}><button onClick={() => setStep(1)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button><button onClick={() => setStep(3)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Pricing</button></div>
                 </div>
               </div>
             )}
@@ -705,57 +690,34 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
             {/* STEP 3: Pricing */}
             {step === 3 && (
               <div style={{ display: "grid", gap: 16 }}>
-                {/* Materials */}
                 <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
                   <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Material Unit Prices</h4>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     {[["Shingles/bndl", "shinglePrice"], ["Hip & Ridge/bndl", "hipRidgePrice"], ["Starter/bndl", "starterPrice"], ["Underlayment/roll", "underlaymentPrice"], ["Ice & Water/roll", "iceWaterPrice"], ["Ridge Vent/ea", "ridgeVentPrice"], ["Step Flash/box", "stepFlashingPrice"], ["Drip Edge/ea", "dripEdgePrice"], ["Coil Nails/box", "coilNailPrice"], ["Cap Nails/box", "capNailPrice"], ["Pipe Boot/ea", "pipeBootPrice"], ["NP1/ea", "np1Price"]].map(([label, key]) => (
-                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <label style={{ fontSize: 11, color: C.gray600 }}>{label}</label>
-                        <input style={numFs} type="number" step="0.01" value={materials[key]} onChange={e => setMat(m => ({ ...m, [key]: Number(e.target.value) }))} />
-                      </div>
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>{label}</label><input style={numFs} type="number" step="0.01" value={materials[key]} onChange={e => setMat(m => ({ ...m, [key]: Number(e.target.value) }))} /></div>
                     ))}
                   </div>
                 </div>
-                {/* Labor & Equipment */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
                     <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Labor</h4>
                     {[["Tear-Off / sq", "tearOffRate"], ["OSB Labor / sheet", "osbLabor"], ["OSB Material / sheet", "osbMaterial"], ["OSB Sheets (total)", "osbSheets"]].map(([label, key]) => (
-                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                        <label style={{ fontSize: 11, color: C.gray600 }}>{label}</label>
-                        <input style={numFs} type="number" step="0.01" value={labor[key]} onChange={e => setLab(l => ({ ...l, [key]: Number(e.target.value) }))} />
-                      </div>
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>{label}</label><input style={numFs} type="number" step="0.01" value={labor[key]} onChange={e => setLab(l => ({ ...l, [key]: Number(e.target.value) }))} /></div>
                     ))}
                   </div>
                   <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
                     <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Equipment & Other</h4>
                     {[["Forklift", "forkliftCost"], ["Dumpster", "dumpsterCost"], ["Permit", "permitCost"]].map(([label, key]) => (
-                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                        <label style={{ fontSize: 11, color: C.gray600 }}>{label}</label>
-                        <input style={numFs} type="number" step="0.01" value={equipment[key]} onChange={e => setEquip(eq => ({ ...eq, [key]: Number(e.target.value) }))} />
-                      </div>
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>{label}</label><input style={numFs} type="number" step="0.01" value={equipment[key]} onChange={e => setEquip(eq => ({ ...eq, [key]: Number(e.target.value) }))} /></div>
                     ))}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <label style={{ fontSize: 11, color: C.gray600 }}>Include Permit</label>
-                      <input type="checkbox" checked={equipment.includePermit} onChange={e => setEquip(eq => ({ ...eq, includePermit: e.target.checked }))} />
-                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>Include Permit</label><input type="checkbox" checked={equipment.includePermit} onChange={e => setEquip(eq => ({ ...eq, includePermit: e.target.checked }))} /></div>
                     <div style={{ borderTop: `1px solid ${C.gray200}`, paddingTop: 10, marginTop: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                        <label style={{ fontSize: 11, color: C.gray600 }}>Margin</label>
-                        <input style={numFs} type="number" step="0.01" value={financials.margin} onChange={e => setFin(f => ({ ...f, margin: Number(e.target.value) }))} />
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <label style={{ fontSize: 11, color: C.gray600 }}>Tax Rate</label>
-                        <input style={numFs} type="number" step="0.001" value={financials.taxRate} onChange={e => setFin(f => ({ ...f, taxRate: Number(e.target.value) }))} />
-                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>Margin</label><input style={numFs} type="number" step="0.01" value={financials.margin} onChange={e => setFin(f => ({ ...f, margin: Number(e.target.value) }))} /></div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><label style={{ fontSize: 11, color: C.gray600 }}>Tax Rate</label><input style={numFs} type="number" step="0.001" value={financials.taxRate} onChange={e => setFin(f => ({ ...f, taxRate: Number(e.target.value) }))} /></div>
                     </div>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button onClick={() => setStep(2)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-                  <button onClick={() => setStep(4)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Review</button>
-                </div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setStep(2)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button><button onClick={() => setStep(4)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Review</button></div>
               </div>
             )}
 
@@ -764,51 +726,24 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
               <div>
                 <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}`, marginBottom: 16 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{leadCompany?.name || "—"} — {leadProperty?.name || "—"}</h3>
-                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 4px" }}>{leadProperty?.address || ""} · {leadContact?.name || ""}</p>
-                  <p style={{ fontSize: 11, color: C.gray400, margin: "0 0 16px" }}>Linked to job: {selectedLead?.stage ? SALES_STAGES.find(s => s.id === selectedLead.stage)?.label : "—"}</p>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>{leadProperty?.address || ""} · {leadContact?.name || ""} · Estimator: {selectedLead?.estimator || "—"}</p>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Buildings</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{buildings.length}</p></div>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Total Sq Ft</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{totalSq.toLocaleString()}</p></div>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Margin</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{Math.round(financials.margin * 100)}%</p></div>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.greenBg }}><p style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase", margin: "0 0 4px" }}>Total Price</p><p style={{ fontSize: 20, fontWeight: 800, color: C.green, margin: 0 }}>{formatCurrency(grandTotal)}</p></div>
                   </div>
-                  {/* Per-building breakdown */}
                   <div style={{ borderRadius: 8, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead><tr style={{ background: C.gray50 }}>
-                        <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Bldg</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Area</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Waste</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Material</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Labor+Equip</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Tax</th>
-                        <th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Margin</th>
-                        <th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Total</th>
-                      </tr></thead>
-                      <tbody>{results.map((r, i) => (
-                        <tr key={i} style={{ borderTop: `1px solid ${C.gray100}` }}>
-                          <td style={{ padding: "8px 10px", fontWeight: 600, color: C.navy }}>{buildings[i]?.siteplanNum || `Bldg ${i + 1}`}</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{buildings[i]?.totalArea?.toLocaleString()} sf</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{Math.round(r.waste * 100)}%</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.navy }}>{fmt(r.materialCost)}</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.navy }}>{fmt(r.laborCost)}</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{fmt(r.materialTax)}</td>
-                          <td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{fmt(r.marginAmt)}</td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: C.navy }}>{fmt(r.totalPrice)}</td>
-                        </tr>
-                      ))}</tbody>
-                      <tfoot><tr style={{ background: C.navy + "08" }}>
-                        <td colSpan="7" style={{ padding: "10px", textAlign: "right", fontWeight: 700, color: C.navy }}>Grand Total:</td>
-                        <td style={{ padding: "10px", textAlign: "right", fontWeight: 800, fontSize: 15, color: C.green }}>{formatCurrency(grandTotal)}</td>
-                      </tr></tfoot>
+                      <thead><tr style={{ background: C.gray50 }}><th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Bldg</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Area</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Waste</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Material</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Labor+Equip</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Tax</th><th style={{ padding: "8px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Margin</th><th style={{ padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Total</th></tr></thead>
+                      <tbody>{results.map((r, i) => (<tr key={i} style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 10px", fontWeight: 600, color: C.navy }}>{buildings[i]?.siteplanNum || `Bldg ${i + 1}`}</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{buildings[i]?.totalArea?.toLocaleString()} sf</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{Math.round(r.waste * 100)}%</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.navy }}>{fmt(r.materialCost)}</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.navy }}>{fmt(r.laborCost)}</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{fmt(r.materialTax)}</td><td style={{ padding: "8px 8px", textAlign: "right", color: C.gray600 }}>{fmt(r.marginAmt)}</td><td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: C.navy }}>{fmt(r.totalPrice)}</td></tr>))}</tbody>
+                      <tfoot><tr style={{ background: C.navy + "08" }}><td colSpan="7" style={{ padding: "10px", textAlign: "right", fontWeight: 700, color: C.navy }}>Grand Total:</td><td style={{ padding: "10px", textAlign: "right", fontWeight: 800, fontSize: 15, color: C.green }}>{formatCurrency(grandTotal)}</td></tr></tfoot>
                     </table>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
                   <button onClick={() => setStep(3)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-                    {saving ? <Spinner size={14} /> : "✓"} Submit Estimate
-                  </button>
+                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} Submit Estimate</button>
                 </div>
               </div>
             )}
@@ -816,14 +751,16 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
         );
       }
 
-      // ── SUBMISSIONS LIST VIEW ────────────────────────────────
+      // ════════════════════════════════════════════════════════════
+      // SUBMISSIONS LIST VIEW
+      // ════════════════════════════════════════════════════════════
       return (
         <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-            <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>Estimates</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Shingle replacement pricing — create, review, approve, and award jobs</p></div>
+            <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>All Estimates</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Review, approve, and award submitted estimates</p></div>
             <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setView("kanban")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", color: C.gray600 }}>← Back to Board</button>
               <button onClick={refresh} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", color: C.gray600 }}>Refresh</button>
-              <button onClick={() => setMode("new")} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.red, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>+ New Estimate</button>
             </div>
           </div>
           <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
@@ -831,30 +768,22 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
               <button key={f.key} onClick={() => setFilter(f.key)} style={{ padding: "6px 14px", borderRadius: 20, border: "none", background: filter === f.key ? C.navy : C.gray100, color: filter === f.key ? C.white : C.gray700, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{f.label} ({counts[f.key] || 0})</button>
             ))}
           </div>
-          {loading ? <div style={{ padding: 48, textAlign: "center", color: C.gray400 }}>Loading...</div> : filtered.length === 0 ? (
+          {loading ? <div style={{ padding: 48, textAlign: "center", color: C.gray400 }}>Loading...</div> : filteredSubs.length === 0 ? (
             <div style={{ textAlign: "center", padding: 48, background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 36, opacity: 0.2, marginBottom: 12 }}>📋</div><div style={{ color: C.gray500 }}>{submissions.length === 0 ? "No estimates yet." : `No ${filter} estimates.`}</div></div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {filtered.map(sub => {
-                const statusColors = { pending: { bg: C.yellowBg, color: C.yellow }, approved: { bg: C.greenBg, color: C.green }, rejected: { bg: C.redBg, color: C.red }, awarded: { bg: C.blueBg, color: C.blue } };
+              {filteredSubs.map(sub => {
+                const statusColors = { pending: { bg: C.yellowBg, color: C.yellow }, approved: { bg: C.greenBg, color: C.green }, rejected: { bg: C.redBg, color: C.red }, awarded: { bg: C.blueBg, color: C.blue }, not_selected: { bg: C.gray100, color: C.gray400 } };
                 const sc = statusColors[sub.status] || statusColors.pending;
                 return (
                   <div key={sub.id} style={{ background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 10, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 700, fontSize: 15, color: C.navy }}>{sub.leadName || sub.project?.jobName || "Untitled"}</span>
-                        <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, textTransform: "uppercase", background: sc.bg, color: sc.color }}>{sub.status}</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: C.gray500, display: "flex", gap: 16 }}>
-                        <span>{sub.project?.companyName}</span><span>{sub.buildings?.length || 0} bldgs</span><span>by {sub.submittedBy || "—"}</span>
-                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 15, color: C.navy }}>{sub.leadName || sub.project?.jobName || "Untitled"}</span><span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, textTransform: "uppercase", background: sc.bg, color: sc.color }}>{sub.status}</span></div>
+                      <div style={{ fontSize: 12, color: C.gray500, display: "flex", gap: 16 }}><span>{sub.project?.companyName}</span><span>{sub.buildings?.length || 0} bldgs</span><span>by {sub.submittedBy || "—"}</span></div>
                     </div>
-                    <div style={{ textAlign: "right", marginRight: 8 }}>
-                      <div style={{ fontWeight: 700, fontSize: 18, fontFamily: "monospace", color: C.navy }}>{fmt(sub.totalPrice || 0)}</div>
-                      <div style={{ fontSize: 11, color: C.gray400 }}>{new Date(sub.createdAt).toLocaleDateString()}</div>
-                    </div>
+                    <div style={{ textAlign: "right", marginRight: 8 }}><div style={{ fontWeight: 700, fontSize: 18, fontFamily: "monospace", color: C.navy }}>{fmt(sub.totalPrice || 0)}</div><div style={{ fontSize: 11, color: C.gray400 }}>{new Date(sub.createdAt).toLocaleDateString()}</div></div>
                     <div style={{ display: "flex", gap: 6 }}>
-                      {sub.status === "pending" && (role === "admin") && <button onClick={() => handleApprove(sub)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.green, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✓ Approve</button>}
+                      {sub.status === "pending" && role === "admin" && <button onClick={() => handleApprove(sub)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.green, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✓ Approve</button>}
                       {sub.status === "approved" && (role === "admin" || role === "estimator") && <button onClick={() => handleAward(sub)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.blue, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>🏆 Award</button>}
                       <button onClick={() => setShowEmail(sub)} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>📧</button>
                     </div>
@@ -863,52 +792,17 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
               })}
             </div>
           )}
-          {/* Beam AI placeholder */}
-          <div style={{ marginTop: 32, padding: "24px", borderRadius: 10, border: `2px dashed ${C.gray300}`, textAlign: "center" }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Low-Slope Estimates (Beam AI)</h3>
-            <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Import takeoffs from Beam AI for TPO, single-ply, and modified bitumen projects</p>
-            <button style={{ padding: "10px 24px", borderRadius: 8, border: `1px solid ${C.navy}30`, background: C.navy + "08", color: C.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📥 Import from Beam AI (Coming Soon)</button>
-          </div>
-          {/* Email compose for estimate */}
-          {showEmail && (
-            <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }} onClick={() => setShowEmail(null)}>
-              <div style={{ width: 480 }} onClick={e => e.stopPropagation()}>
-                <EmailCompose defaultSubject={`Colony Roofers — Estimate for ${showEmail.leadName || showEmail.project?.jobName}`} defaultBody={`Hey,\n\nHope all is well. Attached is our estimate — total: ${fmt(showEmail.totalPrice || 0)}.\n\nLet me know if you have any questions.\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`} onCancel={() => setShowEmail(null)} onSent={() => setShowEmail(null)} />
-              </div>
-            </div>
-          )}
-          {/* Multi-estimate award picker */}
+          {showEmail && <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }} onClick={() => setShowEmail(null)}><div style={{ width: 480 }} onClick={e => e.stopPropagation()}><EmailCompose defaultSubject={`Colony Roofers — Estimate for ${showEmail.leadName || showEmail.project?.jobName}`} defaultBody={`Hey,\n\nHope all is well. Attached is our estimate — total: ${fmt(showEmail.totalPrice || 0)}.\n\nLet me know if you have any questions.\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`} onCancel={() => setShowEmail(null)} onSent={() => setShowEmail(null)} /></div></div>}
           {showAwardPicker && (() => {
             const leadEstimates = submissions.filter(s => s.leadId === showAwardPicker && s.status === "approved");
-            const lead = (salesLeads || []).find(l => l.id === showAwardPicker);
-            return (
-              <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setShowAwardPicker(null)}>
-                <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}` }}>
-                    <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Winning Estimate</h2>
-                    <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>This job has {leadEstimates.length} approved estimates. Choose which one becomes the production budget.</p>
-                  </div>
-                  <div style={{ padding: "16px 28px 28px" }}>
-                    {leadEstimates.map(est => (
-                      <div key={est.id} style={{ padding: "16px", borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 10, cursor: "pointer", transition: "all 0.15s" }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = C.green; e.currentTarget.style.background = C.greenBg + "40"; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.background = "transparent"; }}
-                        onClick={() => doAward(est)}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{est.leadName || est.project?.jobName}</span>
-                          <span style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{fmt(est.totalPrice || 0)}</span>
-                        </div>
-                        <div style={{ fontSize: 12, color: C.gray500 }}>
-                          {est.buildings?.length || 0} bldgs · {Math.ceil((est.buildings?.reduce((s, b) => s + (b.totalArea || 0), 0) || 0) / 100)} sq · by {est.submittedBy} · {new Date(est.createdAt).toLocaleDateString()}
-                        </div>
-                        <div style={{ marginTop: 8, fontSize: 11, color: C.green, fontWeight: 600 }}>Click to award this estimate →</div>
-                      </div>
-                    ))}
-                    <button onClick={() => setShowAwardPicker(null)} style={{ marginTop: 8, padding: "10px 0", width: "100%", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                  </div>
-                </div>
-              </div>
-            );
+            return (<div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setShowAwardPicker(null)}><div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+              <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}` }}><h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Winning Estimate</h2><p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>This job has {leadEstimates.length} approved estimates. Choose which becomes the budget.</p></div>
+              <div style={{ padding: "16px 28px 28px" }}>{leadEstimates.map(est => (<div key={est.id} style={{ padding: "16px", borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 10, cursor: "pointer" }} onMouseEnter={e => { e.currentTarget.style.borderColor = C.green; e.currentTarget.style.background = C.greenBg + "40"; }} onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.background = "transparent"; }} onClick={() => doAward(est)}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{est.leadName}</span><span style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{fmt(est.totalPrice || 0)}</span></div>
+                <div style={{ fontSize: 12, color: C.gray500 }}>{est.buildings?.length || 0} bldgs · by {est.submittedBy} · {new Date(est.createdAt).toLocaleDateString()}</div>
+                <div style={{ marginTop: 8, fontSize: 11, color: C.green, fontWeight: 600 }}>Click to award →</div>
+              </div>))}<button onClick={() => setShowAwardPicker(null)} style={{ marginTop: 8, padding: "10px 0", width: "100%", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button></div>
+            </div></div>);
           })()}
         </div>
       );
@@ -3746,6 +3640,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       { id: "contacted", label: "Contacted", color: "#3B82F6" },
       { id: "meeting_set", label: "Meeting Set", color: "#8B5CF6" },
       { id: "proposal_sent", label: "Proposal Sent", color: "#F59E0B" },
+      { id: "being_estimated", label: "Being Estimated", color: "#6366F1" },
       { id: "negotiation", label: "Negotiation", color: "#EC4899" },
       { id: "closed_won", label: "Closed Won", color: "#10B981" },
       { id: "closed_lost", label: "Closed Lost", color: "#EF4444" },
@@ -4644,7 +4539,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "create_property", description: "Create a new property linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" } }, required: ["name"] } },
         { name: "create_contact", description: "Create a new contact linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" } }, required: ["name"] } },
         { name: "create_lead", description: "Create a new sales lead/opportunity in the pipeline", input_schema: { type: "object", properties: { company: { type: "string", description: "Company name if not linking to existing" }, companyId: { type: "string", description: "ID of existing company" }, propertyId: { type: "string" }, contactId: { type: "string" }, contactName: { type: "string" }, contactEmail: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, source: { type: "string" }, estimatedValue: { type: "number" }, notes: { type: "string" } }, required: [] } },
-        { name: "update_lead", description: "Update an existing sales lead — change stage, value, notes, next action, etc.", input_schema: { type: "object", properties: { leadId: { type: "string" }, stage: { type: "string", enum: ["new_lead", "contacted", "meeting_set", "proposal_sent", "negotiation", "closed_won", "closed_lost"] }, estimatedValue: { type: "number" }, nextAction: { type: "string" }, notes: { type: "string" } }, required: ["leadId"] } },
+        { name: "update_lead", description: "Update an existing sales lead — change stage, value, notes, next action, estimator, etc.", input_schema: { type: "object", properties: { leadId: { type: "string" }, stage: { type: "string", enum: ["new_lead", "contacted", "meeting_set", "proposal_sent", "being_estimated", "negotiation", "closed_won", "closed_lost"] }, estimatedValue: { type: "number" }, nextAction: { type: "string" }, estimator: { type: "string", description: "Assign an estimator by name" }, notes: { type: "string" } }, required: ["leadId"] } },
         { name: "create_ticket", description: "Create a new service ticket", input_schema: { type: "object", properties: { subject: { type: "string" }, type: { type: "string", enum: ["Leak / Repair", "Warranty Claim", "Scheduled Maintenance", "Inspection Follow-Up", "Emergency", "Other"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, companyId: { type: "string" }, propertyId: { type: "string" }, contactId: { type: "string" }, description: { type: "string" }, assignedTo: { type: "string" } }, required: ["subject"] } },
         { name: "update_ticket", description: "Update a service ticket — change status, priority, assignment, add notes", input_schema: { type: "object", properties: { ticketId: { type: "string" }, status: { type: "string", enum: ["New", "Dispatched", "In Progress", "On Hold", "Complete", "Closed"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, assignedTo: { type: "string" }, notes: { type: "string" } }, required: ["ticketId"] } },
         { name: "search_crm", description: "Search across all CRM data — companies, properties, contacts, leads, tickets. Use this to find IDs before creating or updating records.", input_schema: { type: "object", properties: { query: { type: "string", description: "Search term" }, type: { type: "string", enum: ["all", "companies", "properties", "contacts", "leads", "tickets"] } }, required: ["query"] } },
@@ -4741,7 +4636,7 @@ ${tickets.slice(0, 12).map(t => `  [id:${t.id}] ${t.subject} | ${companies.find(
 
 TEAM: Zach (Owner), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
 MARKETS: Atlanta (ATL), Tampa (TPA), Dallas (DFW)
-SALES STAGES: new_lead, contacted, meeting_set, proposal_sent, negotiation, closed_won, closed_lost
+SALES STAGES: new_lead, contacted, meeting_set, proposal_sent, being_estimated, negotiation, closed_won, closed_lost
 TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       };
 
