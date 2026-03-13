@@ -4890,6 +4890,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { id: "overview", label: "Overview" }, { id: "documents", label: "Documents" },
         { id: "schedule", label: "Schedule" }, { id: "orders", label: "Orders" },
         { id: "logs", label: "Daily Logs" }, { id: "budget", label: "Budget" },
+        { id: "sov", label: "SOV" },
         { id: "change_orders", label: "Change Orders" }, { id: "safety", label: `Safety ${(project.safetyIncidents || []).filter(s => !s.resolved).length > 0 ? `(${(project.safetyIncidents || []).filter(s => !s.resolved).length})` : ""}` },
         { id: "email", label: "📧 Email" },
       ];
@@ -4976,6 +4977,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {activeTab === "orders" && <OrdersTab project={project} onUpdateProject={handleProjectUpdate} supers={supers} />}
               {activeTab === "logs" && <DailyLogsTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "budget" && <BudgetTab project={project} onUpdateProject={handleProjectUpdate} />}
+              {activeTab === "sov" && (<div>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Schedule of Values</h4>
+                <p style={{ fontSize: 12, color: C.gray500, marginBottom: 16 }}>Manage and export the Schedule of Values for progress billing on this project.</p>
+                <SovEditor leadId={project.leadId || project.id} projectName={project.name} estimatedValue={project.contractValue || 0} user={user} />
+              </div>)}
               {activeTab === "change_orders" && <ChangeOrderTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "safety" && <SafetyTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "email" && (
@@ -10661,7 +10667,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       const [activeModule, setActiveModule] = useState(null);
       const [showMenu, setShowMenu] = useState(false);
       const [settingsView, setSettingsView] = useState(null);
-      const [sidebarOpen, setSidebarOpen] = useState(true);
+      const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
       const [showFloatingEmail, setShowFloatingEmail] = useState(false);
       const [floatingEmailCtx, setFloatingEmailCtx] = useState(null); // { contactId, contactEmail, contactName, subject }
       // Expose email context setter globally so any module can set it
@@ -10727,7 +10733,19 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
         return () => document.removeEventListener("mousedown", handle);
       }, [showNotifications]);
 
-      const myMentions = mentionsData.filter(m => m.targetEmail?.toLowerCase() === user?.email?.toLowerCase());
+      // Match mentions for current user across all known emails (login email + CRM user email)
+      const myEmailSet = useMemo(() => {
+        const emails = new Set();
+        if (user?.email) emails.add(user.email.toLowerCase());
+        // Also include emails from CRM users that match this user by name or email
+        (crmUsers || []).forEach(u => {
+          if (u.email && (u.email.toLowerCase() === user?.email?.toLowerCase() || u.name === user?.name)) {
+            emails.add(u.email.toLowerCase());
+          }
+        });
+        return emails;
+      }, [user, crmUsers]);
+      const myMentions = mentionsData.filter(m => m.targetEmail && myEmailSet.has(m.targetEmail.toLowerCase()));
       const unreadCount = myMentions.filter(m => !m.read).length;
 
       const addMention = useCallback((targetEmail, context) => {
@@ -10740,8 +10758,8 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       }, [setMentions]);
 
       const markAllRead = useCallback(() => {
-        setMentions(prev => prev.map(m => m.targetEmail?.toLowerCase() === user?.email?.toLowerCase() ? { ...m, read: true } : m));
-      }, [user, setMentions]);
+        setMentions(prev => prev.map(m => m.targetEmail && myEmailSet.has(m.targetEmail.toLowerCase()) ? { ...m, read: true } : m));
+      }, [myEmailSet, setMentions]);
 
       // Enhanced notification engine
       const engineAlerts = useNotificationEngine(salesLeadsData, serviceTicketsData, inspectionsData, [], user, crmUsers);
@@ -10813,7 +10831,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
             {/* Module Nav Items */}
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
               {modules.map(m => (
-                <button key={m.key} onClick={() => { setActiveModule(m.key); setSettingsView(null); }} style={{ width: "100%", padding: "10px 14px", border: "none", borderRadius: 8, background: currentModule === m.key && !settingsView ? "rgba(255,255,255,0.12)" : "transparent", color: currentModule === m.key && !settingsView ? C.white : "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left", marginBottom: 2, whiteSpace: "nowrap", transition: "background 0.15s" }}
+                <button key={m.key} onClick={() => { setActiveModule(m.key); setSettingsView(null); if (isMobile) setSidebarOpen(false); }} style={{ width: "100%", padding: "10px 14px", border: "none", borderRadius: 8, background: currentModule === m.key && !settingsView ? "rgba(255,255,255,0.12)" : "transparent", color: currentModule === m.key && !settingsView ? C.white : "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, textAlign: "left", marginBottom: 2, whiteSpace: "nowrap", transition: "background 0.15s" }}
                   onMouseEnter={e => { if (currentModule !== m.key || settingsView) e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
                   onMouseLeave={e => { if (currentModule !== m.key || settingsView) e.currentTarget.style.background = "transparent"; }}>
                   <span style={{ fontSize: 16, width: 22, textAlign: "center" }}>{m.icon}</span> {m.label}
