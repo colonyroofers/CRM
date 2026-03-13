@@ -5007,9 +5007,29 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
     // ============================================================
     // MAIN APP SHELL (with dynamic user permissions)
     // ============================================================
+    const DEFAULT_CRM_USERS = [
+      { id: "u1", name: "Zach Reece", email: "zach@colonyroofers.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+      { id: "u1b", name: "Zach Reece", email: "zachreececpa@gmail.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+      { id: "u2", name: "Brayleigh Gardner", email: "brayleigh@colonyroofers.com", role: "coordinator", modules: ROLE_PRESETS.coordinator.modules, team: "Operations", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+      { id: "u3", name: "Lucio Martinez", email: "lucio@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Tampa Crew", markets: ["TPA"], visibility: "team", active: true },
+      { id: "u4", name: "Derrick Newsome", email: "derrick@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Atlanta Crew", markets: ["ATL"], visibility: "team", active: true },
+      { id: "u5", name: "Joseph", email: "joseph@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+      { id: "u6", name: "J. Garside", email: "jgarside@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+    ];
+
     function App() {
       const { user, loading, error, signIn, signOut } = useFirebaseAuth();
       const [activeModule, setActiveModule] = useState(null);
+      const [showMenu, setShowMenu] = useState(false);
+      const [settingsView, setSettingsView] = useState(null);
+      const menuRef = useRef(null);
+
+      // Close menu on outside click
+      useEffect(() => {
+        const handle = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false); };
+        if (showMenu) document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+      }, [showMenu]);
 
       // ── SHARED ENTITY STORES ─────────────────────────────────
       const [companiesData, saveCompanies] = useFirestoreCollection("cr_companies", []);
@@ -5035,15 +5055,6 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const serviceTickets = serviceTicketsData;
 
       // ── CRM USERS (dynamic permissions) ──────────────────────
-      const DEFAULT_CRM_USERS = [
-        { id: "u1", name: "Zach Reece", email: "zach@colonyroofers.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
-        { id: "u1b", name: "Zach Reece", email: "zachreececpa@gmail.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
-        { id: "u2", name: "Brayleigh Gardner", email: "brayleigh@colonyroofers.com", role: "coordinator", modules: ROLE_PRESETS.coordinator.modules, team: "Operations", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
-        { id: "u3", name: "Lucio Martinez", email: "lucio@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Tampa Crew", markets: ["TPA"], visibility: "team", active: true },
-        { id: "u4", name: "Derrick Newsome", email: "derrick@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Atlanta Crew", markets: ["ATL"], visibility: "team", active: true },
-        { id: "u5", name: "Joseph", email: "joseph@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
-        { id: "u6", name: "J. Garside", email: "jgarside@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
-      ];
       const [crmUsersData, saveCrmUsers] = useFirestoreCollection("cr_crm_users", DEFAULT_CRM_USERS);
       const crmUsersRef = useRef(crmUsersData); crmUsersRef.current = crmUsersData;
       const setCrmUsers = useCallback(u => { const n = typeof u === "function" ? u(crmUsersRef.current) : u; saveCrmUsers(n); }, [saveCrmUsers]);
@@ -5090,16 +5101,6 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       ].filter(m => allowedModules.includes(m.key));
 
       const roleColor = ROLE_COLORS[role] || C.gray500;
-      const [showMenu, setShowMenu] = useState(false);
-      const [settingsView, setSettingsView] = useState(null); // "profile" | "users"
-      const menuRef = useRef(null);
-
-      // Close menu on outside click
-      useEffect(() => {
-        const handle = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false); };
-        if (showMenu) document.addEventListener("mousedown", handle);
-        return () => document.removeEventListener("mousedown", handle);
-      }, [showMenu]);
 
       // If a settings view is active, show it instead of a module
       if (settingsView === "profile") {
