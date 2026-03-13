@@ -6776,13 +6776,21 @@ Extract every identifiable expense. Use the most specific category possible. If 
     function AIAgent({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets, currentModule }) {
       const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [open, setOpen] = useState(false);
-      const [messages, setMessages] = useState([]);
+      const todayKey = `cr_ai_chat_${new Date().toISOString().split("T")[0]}`;
+      const [messages, setMessages] = useState(() => {
+        try { const saved = localStorage.getItem(todayKey); return saved ? JSON.parse(saved) : []; } catch(e) { return []; }
+      });
       const [input, setInput] = useState("");
       const [processing, setProcessing] = useState(false);
       const chatEndRef = useRef(null);
       const inputRef = useRef(null);
       const fileInputRef = useRef(null);
       const [attachedFile, setAttachedFile] = useState(null);
+
+      // Persist chat history (resets daily via todayKey)
+      useEffect(() => {
+        try { localStorage.setItem(todayKey, JSON.stringify(messages)); } catch(e) {}
+      }, [messages, todayKey]);
 
       useEffect(() => { if (open) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); inputRef.current?.focus(); } }, [open, messages]);
 
@@ -6799,6 +6807,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "draft_email", description: "Send an email to a contact — logged to the CRM activity feed", input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
         { name: "get_crm_report", description: "Generate a CRM status report — pipeline summary, open tickets, recent activity. Use this when asked for updates, status reports, or summaries.", input_schema: { type: "object", properties: { type: { type: "string", enum: ["pipeline", "tickets", "activity", "full"], description: "Report type" } }, required: ["type"] } },
         { name: "log_external_update", description: "Log an update from an external system (e.g., Claude Co-Work) into the CRM activity feed", input_schema: { type: "object", properties: { entityType: { type: "string", enum: ["lead", "ticket", "company", "general"] }, entityId: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Source system name, e.g., 'Claude Co-Work'" } }, required: ["message"] } },
+        { name: "create_product", description: "Create a new product in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, category: { type: "string" }, manufacturer: { type: "string" }, sku: { type: "string" }, price: { type: "number" }, unit: { type: "string", description: "Unit of measure, e.g. each, bundle, sq, roll" }, description: { type: "string" } }, required: ["name"] } },
+        { name: "create_vendor", description: "Create a new vendor in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, contactName: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, category: { type: "string" } }, required: ["name"] } },
         { name: "process_document", description: "Process an uploaded document (PDF, Excel, Word) to extract data for the catalog, vendor list, or other CRM data. Upload a pricing sheet to update product prices, a vendor list to create vendors, or other documents to extract structured data.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["update_pricing", "import_vendors", "import_products", "extract_data"], description: "What to do with the document data" }, data: { type: "array", items: { type: "object" }, description: "Extracted data rows from the document" } }, required: ["action", "data"] } },
       ];
 
@@ -6907,6 +6917,16 @@ Extract every identifiable expense. Use the most specific category possible. If 
             }
             return { success: true, message: `Logged update from ${input.source || "External"}: "${input.message}"` };
           }
+          if (name === "create_product") {
+            const product = { id, name: input.name, category: input.category || "General", manufacturer: input.manufacturer || "", sku: input.sku || "", price: Number(input.price) || 0, unit: input.unit || "each", description: input.description || "", dataSheets: [], createdAt: now };
+            if (firestoreDb) { try { await firestoreDb.collection("cr_product_catalog").add(product); } catch (e) { console.error(e); } }
+            return { success: true, message: `Created product "${input.name}" in catalog (ID: ${id})`, id };
+          }
+          if (name === "create_vendor") {
+            const vendor = { id, name: input.name, contactName: input.contactName || "", phone: input.phone || "", email: input.email || "", category: input.category || "General", createdAt: now };
+            if (firestoreDb) { try { await firestoreDb.collection("cr_vendors").add(vendor); } catch (e) { console.error(e); } }
+            return { success: true, message: `Created vendor "${input.name}" (ID: ${id})`, id };
+          }
           if (name === "process_document") {
             const { action, data } = input;
             if (!data || !data.length) return { success: false, message: "No data provided" };
@@ -6960,7 +6980,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
         return `You are the AI assistant for Colony Roofers CRM. You can both ANSWER QUESTIONS and TAKE ACTIONS using tools. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. Currently viewing: ${currentModule} module.
 
-IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm first. Always confirm what you did after taking actions.
+IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm first. Always confirm what you did after taking actions. You can create ANY type of object: companies, contacts, properties, leads, tickets, products, and vendors. If you need clarification on required fields, ask the user before creating.
 
 When drafting emails, use Zach's style: short (1-3 sentences), direct, casual but professional. Client emails get a brief personal opener. Internal emails skip pleasantries. Sign off: Zach Reece, Owner / Colony Roofers / 404-806-0956
 
@@ -7080,7 +7100,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               <div><div style={{ fontSize: 14, fontWeight: 700, color: C.white }}>CR Assistant</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>Can read & write your CRM</div></div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setMessages([])} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", padding: "4px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>Clear</button>
+              <button onClick={() => { setMessages([]); try { localStorage.removeItem(todayKey); } catch(e) {} }} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", padding: "4px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>Clear</button>
               <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 8px", borderRadius: 5, fontSize: 16 }}>×</button>
             </div>
           </div>
