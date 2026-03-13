@@ -627,7 +627,12 @@
                             <div key={job.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer" }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 2 }}>{job.jobName || co?.name || job.company || "—"}</div>
                               {co && job.jobName && <div style={{ fontSize: 11, color: C.gray500, marginBottom: 2 }}>🏢 {co.name}</div>}
-                              <div style={{ fontSize: 11, color: C.gray500, marginBottom: 8 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
+                              <div style={{ fontSize: 11, color: C.gray500, marginBottom: 6 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
+                              {/* Scope & Notes from sales */}
+                              {(job.scopeOfWork || job.estimatingNotes) && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: C.blueBg + "40", border: `1px solid ${C.blue}20` }}>
+                                {job.scopeOfWork && <div style={{ fontSize: 10, color: C.navy, marginBottom: job.estimatingNotes ? 4 : 0 }}><span style={{ fontWeight: 700 }}>Scope:</span> {job.scopeOfWork.length > 80 ? job.scopeOfWork.substring(0, 80) + "..." : job.scopeOfWork}</div>}
+                                {job.estimatingNotes && <div style={{ fontSize: 10, color: C.gray600 }}><span style={{ fontWeight: 700 }}>Notes:</span> {job.estimatingNotes.length > 60 ? job.estimatingNotes.substring(0, 60) + "..." : job.estimatingNotes}</div>}
+                              </div>}
                               {/* Estimator assignment */}
                               <div style={{ marginBottom: 8 }}>
                                 <select value={job.estimator || ""} onChange={e => { e.stopPropagation(); handleAssignEstimator(job.id, e.target.value); }}
@@ -710,6 +715,8 @@
                     {leadProperty && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>🏠 {leadProperty.name} — {leadProperty.address || ""}</div>}
                     {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || ""}</div>}
                     {selectedLead.estimator && <div style={{ fontSize: 12, color: C.gray600 }}>📐 Estimator: {selectedLead.estimator}</div>}
+                    {selectedLead.scopeOfWork && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.blue}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Scope of Work</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.scopeOfWork}</div></div>}
+                    {selectedLead.estimatingNotes && <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.yellow}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Notes from Sales</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.estimatingNotes}</div></div>}
                   </div>
                 )}
                 <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
@@ -3781,8 +3788,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [viewMode, setViewMode] = useState("kanban");
       const [selectedLead, setSelectedLead] = useState(null);
       const [showCreate, setShowCreate] = useState(false);
-      const [showBidDatePrompt, setShowBidDatePrompt] = useState(null); // leadId awaiting bid date
+      const [showBidDatePrompt, setShowBidDatePrompt] = useState(null);
       const [bidDateInput, setBidDateInput] = useState("");
+      const [bidScopeInput, setBidScopeInput] = useState("");
+      const [bidNotesInput, setBidNotesInput] = useState("");
       const [search, setSearch] = useState("");
       const [marketFilter, setMarketFilter] = useState("All");
       const [dragLead, setDragLead] = useState(null);
@@ -3799,13 +3808,22 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleCreate = (lead) => { setLeads(prev => [{ ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Project created", by: user.name, at: new Date().toISOString() }] }, ...prev]); setShowCreate(false); };
       const handleUpdate = (id, updates) => setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
       const handleStageChange = (leadId, newStage) => {
-        if (newStage === "being_estimated") { setShowBidDatePrompt(leadId); setBidDateInput(""); return; }
+        if (newStage === "being_estimated") { setShowBidDatePrompt(leadId); setBidDateInput(""); setBidScopeInput(""); setBidNotesInput(""); return; }
         setLeads(prev => prev.map(l => l.id !== leadId ? l : { ...l, stage: newStage, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to ${SALES_STAGES.find(s => s.id === newStage)?.label}`, by: user.name, at: new Date().toISOString() }] }));
       };
       const handleConfirmBidDate = () => {
         if (!bidDateInput) return;
-        setLeads(prev => prev.map(l => l.id !== showBidDatePrompt ? l : { ...l, stage: "being_estimated", bidDueDate: bidDateInput, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to Being Estimated — Bid due ${new Date(bidDateInput).toLocaleDateString()}`, by: user.name, at: new Date().toISOString() }] }));
-        setShowBidDatePrompt(null); setBidDateInput("");
+        const scopeText = bidScopeInput.trim();
+        const notesText = bidNotesInput.trim();
+        setLeads(prev => prev.map(l => l.id !== showBidDatePrompt ? l : {
+          ...l, stage: "being_estimated", bidDueDate: bidDateInput,
+          scopeOfWork: scopeText || l.scopeOfWork || "",
+          estimatingNotes: notesText || l.estimatingNotes || "",
+          activities: [...(l.activities || []),
+            { type: "stage_change", text: `Moved to Being Estimated — Bid due ${new Date(bidDateInput).toLocaleDateString()}${scopeText ? `\nScope: ${scopeText}` : ""}${notesText ? `\nNotes: ${notesText}` : ""}`, by: user.name, at: new Date().toISOString() }
+          ]
+        }));
+        setShowBidDatePrompt(null); setBidDateInput(""); setBidScopeInput(""); setBidNotesInput("");
       };
       const handleDrop = (stageId, e) => { e.preventDefault(); if (dragLead && dragLead.stage !== stageId) handleStageChange(dragLead.id, stageId); setDragLead(null); };
       const handleDelete = (id) => { if (confirm("Delete this lead?")) { setLeads(prev => prev.filter(l => l.id !== id)); setSelectedLead(null); } };
@@ -3893,20 +3911,43 @@ Extract every identifiable expense. Use the most specific category possible. If 
             )}
           </div>
           {showCreate && <CreateLeadModal entities={entities} onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
-          {showBidDatePrompt && (
+          {showBidDatePrompt && (() => {
+            const promptLead = leads.find(l => l.id === showBidDatePrompt);
+            const promptCo = promptLead ? co(promptLead.companyId) : null;
+            const promptPr = promptLead ? pr(promptLead.propertyId) : null;
+            return (
             <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }}>
-              <div style={{ background: C.white, borderRadius: 16, width: 400, padding: "28px", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Move to Estimating</h3>
-                <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Set the bid due date for this job before sending to estimating.</p>
-                <label style={{ fontSize: 11, fontWeight: 600, color: C.navy, display: "block", marginBottom: 4 }}>Bid Due Date *</label>
-                <input type="date" value={bidDateInput} onChange={e => setBidDateInput(e.target.value)} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 14, color: C.navy, outline: "none", boxSizing: "border-box" }} />
-                <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
-                  <button onClick={() => { setShowBidDatePrompt(null); setBidDateInput(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                  <button onClick={handleConfirmBidDate} disabled={!bidDateInput} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: bidDateInput ? `linear-gradient(135deg, #6366F1, #4F46E5)` : C.gray200, color: bidDateInput ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: bidDateInput ? "pointer" : "default" }}>Send to Estimating</button>
+              <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
+                <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}` }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Send to Estimating</h3>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Provide bid details and scope info for the estimating team.</p>
+                </div>
+                {/* Job summary */}
+                {promptLead && <div style={{ padding: "12px 28px", background: C.gray50, borderBottom: `1px solid ${C.gray200}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{promptLead.jobName || promptCo?.name || "—"}</div>
+                  <div style={{ fontSize: 11, color: C.gray500 }}>{promptCo?.name && promptLead.jobName ? `🏢 ${promptCo.name} · ` : ""}{promptPr?.name || "—"}{promptPr?.address ? ` · ${promptPr.address}` : ""}</div>
+                </div>}
+                <div style={{ padding: "20px 28px 28px", display: "grid", gap: 16 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.navy, display: "block", marginBottom: 4 }}>Bid Due Date *</label>
+                    <input type="date" value={bidDateInput} onChange={e => setBidDateInput(e.target.value)} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 14, color: C.navy, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.navy, display: "block", marginBottom: 4 }}>Scope of Work</label>
+                    <textarea value={bidScopeInput} onChange={e => setBidScopeInput(e.target.value)} placeholder="Describe the scope — e.g. Full tear-off and re-roof, 12 buildings, asphalt shingles, includes gutters..." rows={4} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.navy, display: "block", marginBottom: 4 }}>Additional Notes for Estimating</label>
+                    <textarea value={bidNotesInput} onChange={e => setBidNotesInput(e.target.value)} placeholder="Special requirements, access issues, client preferences, competing bids, urgency level..." rows={3} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button onClick={() => { setShowBidDatePrompt(null); setBidDateInput(""); setBidScopeInput(""); setBidNotesInput(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                    <button onClick={handleConfirmBidDate} disabled={!bidDateInput} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: bidDateInput ? `linear-gradient(135deg, #6366F1, #4F46E5)` : C.gray200, color: bidDateInput ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: bidDateInput ? "pointer" : "default" }}>Send to Estimating</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            </div>);
+          })()}
           {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} />}
         </div>
       );
