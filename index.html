@@ -102,16 +102,16 @@
     }
 
     // ─── ROLE SYSTEM (dynamic — Firestore-backed with hardcoded fallback) ───
-    const ALL_MODULES = ["directory", "sales", "estimating", "production", "inspections", "catalog", "service", "finance", "reports"];
-    const MODULE_LABELS = { directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
-    const MODULE_ICONS = { directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
+    const ALL_MODULES = ["daily_digest", "directory", "inspections", "sales", "estimating", "production", "service", "finance", "reports", "catalog"];
+    const MODULE_LABELS = { daily_digest: "Daily Digest", directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
+    const MODULE_ICONS = { daily_digest: "📅", directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
 
     const ROLE_PRESETS = {
       admin: { label: "Admin", modules: ALL_MODULES, color: "#E63946" },
-      estimator: { label: "Estimator", modules: ["directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
-      lead_estimator: { label: "Lead Estimator", modules: ["directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
-      coordinator: { label: "Coordinator", modules: ["directory", "sales", "production", "inspections", "service", "reports"], color: "#10B981" },
-      superintendent: { label: "Superintendent", modules: ["directory", "production", "inspections", "service"], color: "#F59E0B" },
+      estimator: { label: "Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
+      lead_estimator: { label: "Lead Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
+      coordinator: { label: "Coordinator", modules: ["daily_digest", "directory", "sales", "production", "inspections", "service", "reports"], color: "#10B981" },
+      superintendent: { label: "Superintendent", modules: ["daily_digest", "directory", "production", "inspections", "service"], color: "#F59E0B" },
     };
     const ROLE_COLORS = { admin: "#E63946", estimator: "#3B82F6", lead_estimator: "#2563EB", coordinator: "#10B981", superintendent: "#F59E0B" };
 
@@ -3964,18 +3964,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   const a = document.createElement("a"); a.href = url; a.download = `${activeTab}_import_template.csv`; a.click(); URL.revokeObjectURL(url);
                 }} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>📥 Template</button>
                 <label style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center" }}>
-                  📤 Import CSV
-                  <input type="file" accept=".csv" style={{ display: "none" }} onChange={e => {
+                  📤 Import CSV/Excel
+                  <input type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={e => {
                     const file = e.target.files[0]; if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                      const lines = ev.target.result.split("\n").filter(l => l.trim());
-                      if (lines.length < 2) { alert("CSV must have a header row and at least one data row."); return; }
-                      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
-                      const rows = lines.slice(1).map(line => {
-                        const vals = line.split(",").map(v => v.trim());
-                        const obj = {}; headers.forEach((h, i) => { obj[h] = vals[i] || ""; }); return obj;
-                      });
+                    const isExcel = file.name.match(/\.(xlsx|xls)$/i);
+                    const processRows = (rows) => {
                       if (activeTab === "vendors") {
                         const newVendors = rows.filter(r => r.name).map(r => ({ id: generateId(), name: r.name, type: r.type || "Distributor", contact: r.contact || "", phone: r.phone || "", email: r.email || "", address: r.address || "", notes: r.notes || "", createdAt: new Date().toISOString() }));
                         setVendors(prev => [...newVendors, ...prev]);
@@ -3986,7 +3979,32 @@ Extract every identifiable expense. Use the most specific category possible. If 
                         alert(`Imported ${newProducts.length} products!`);
                       }
                     };
-                    reader.readAsText(file);
+                    if (isExcel && window.XLSX) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        try {
+                          const wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+                          const ws = wb.Sheets[wb.SheetNames[0]];
+                          const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+                          const rows = json.map(r => { const obj = {}; Object.keys(r).forEach(k => { obj[k.toLowerCase().trim()] = String(r[k]).trim(); }); return obj; });
+                          processRows(rows);
+                        } catch (err) { alert("Error reading Excel file: " + err.message); }
+                      };
+                      reader.readAsArrayBuffer(file);
+                    } else {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const lines = ev.target.result.split("\n").filter(l => l.trim());
+                        if (lines.length < 2) { alert("File must have a header row and at least one data row."); return; }
+                        const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+                        const rows = lines.slice(1).map(line => {
+                          const vals = line.split(",").map(v => v.trim());
+                          const obj = {}; headers.forEach((h, i) => { obj[h] = vals[i] || ""; }); return obj;
+                        });
+                        processRows(rows);
+                      };
+                      reader.readAsText(file);
+                    }
                     e.target.value = "";
                   }} />
                 </label>
@@ -5952,6 +5970,131 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
+    // MODULE: DAILY DIGEST
+    // ============================================================
+    function DailyDigestModule({ user, role, entities, salesLeads, serviceTickets, inspections }) {
+      const today = new Date().toISOString().split("T")[0];
+      const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+      // Gather tasks assigned to user across all objects
+      const allTaskKeys = Object.keys(localStorage).filter(k => k.startsWith("cr_tasks_"));
+      const myTasks = [];
+      allTaskKeys.forEach(key => {
+        try {
+          const tasks = JSON.parse(localStorage.getItem(key) || "[]");
+          tasks.filter(t => !t.completed && (t.assignee === user.name || t.createdBy === user.name)).forEach(t => {
+            myTasks.push({ ...t, source: key.replace("cr_tasks_", "") });
+          });
+        } catch(e) {}
+      });
+      // Also check Firestore collections
+      const [firestoreTasks, setFirestoreTasks] = useState([]);
+      useEffect(() => {
+        if (!firestoreDb) return;
+        // We'll just use localStorage tasks for now — Firestore tasks load above
+      }, []);
+
+      const todayTasks = myTasks.filter(t => t.dueDate === today);
+      const overdueTasks = myTasks.filter(t => t.dueDate && t.dueDate < today);
+      const upcomingTasks = myTasks.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]);
+
+      // Today's inspections for this user
+      const myInspections = (inspections || []).filter(insp => {
+        const inspDate = insp.scheduledDate || insp.createdAt?.split("T")[0];
+        return inspDate === today && (insp.inspector === user.name || insp.createdBy === user.name);
+      });
+
+      // Active sales leads assigned to or owned by user
+      const myLeads = (salesLeads || []).filter(l => l.assignedTo === user.name || l.createdBy === user.name).filter(l => !["awarded", "closed_lost"].includes(l.stage));
+
+      // Active service tickets
+      const myTickets = (serviceTickets || []).filter(t => (t.assignedTo === user.name || t.createdBy === user.name) && !["Complete", "Closed"].includes(t.status));
+
+      const TaskRow = ({ t }) => (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.gray100}` }}>
+          <span style={{ fontSize: 12, color: C.navy, flex: 1 }}>{t.title}</span>
+          {t.dueDate && <span style={{ fontSize: 10, fontWeight: 600, color: t.dueDate < today ? C.red : t.dueDate === today ? C.yellow : C.gray400 }}>{new Date(t.dueDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>}
+        </div>
+      );
+
+      return (
+        <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
+          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px 32px" }}>
+            <div style={{ marginBottom: 24 }}>
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Daily Digest</h1>
+              <p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>{todayLabel} — here's what's on your plate, {user.name?.split(" ")[0]}</p>
+            </div>
+
+            {/* Summary cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: "16px 18px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: overdueTasks.length > 0 ? C.red : C.navy }}>{todayTasks.length}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.gray500, marginTop: 4 }}>Tasks Today</div>
+                {overdueTasks.length > 0 && <div style={{ fontSize: 10, color: C.red, fontWeight: 700, marginTop: 4 }}>{overdueTasks.length} overdue</div>}
+              </div>
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: "16px 18px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.navy }}>{myInspections.length}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.gray500, marginTop: 4 }}>Inspections Today</div>
+              </div>
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: "16px 18px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.navy }}>{myLeads.length}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.gray500, marginTop: 4 }}>Active Projects</div>
+              </div>
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: "16px 18px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.navy }}>{myTickets.length}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.gray500, marginTop: 4 }}>Open Tickets</div>
+              </div>
+            </div>
+
+            {/* Overdue tasks */}
+            {overdueTasks.length > 0 && (
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.red}30`, marginBottom: 16, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `2px solid ${C.red}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.red }}>⚠ Overdue Tasks ({overdueTasks.length})</span>
+                </div>
+                {overdueTasks.map(t => <TaskRow key={t.id} t={t} />)}
+              </div>
+            )}
+
+            {/* Today's tasks */}
+            <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: `2px solid ${C.navy}` }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>📋 Today's Tasks ({todayTasks.length})</span>
+              </div>
+              {todayTasks.length === 0 ? <div style={{ padding: 20, textAlign: "center", color: C.gray400, fontSize: 12 }}>No tasks due today</div> : todayTasks.map(t => <TaskRow key={t.id} t={t} />)}
+            </div>
+
+            {/* Today's inspections */}
+            {myInspections.length > 0 && (
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `2px solid #F59E0B` }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>🔍 Today's Inspections ({myInspections.length})</span>
+                </div>
+                {myInspections.map(insp => (
+                  <div key={insp.id} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{insp.propertyName || insp.address || "Inspection"}</div>
+                      <div style={{ fontSize: 10, color: C.gray400 }}>{insp.inspector} · {insp.status || "Scheduled"}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upcoming tasks this week */}
+            {upcomingTasks.length > 0 && (
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `2px solid ${C.blue}` }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>📆 Upcoming This Week ({upcomingTasks.length})</span>
+                </div>
+                {upcomingTasks.map(t => <TaskRow key={t.id} t={t} />)}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // MODULE: ACCOUNTING (Placeholder)
     // ============================================================
     function FinanceModule({ user, role }) {
@@ -6989,6 +7132,49 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                       <strong>Integration Ready:</strong> All CRM objects include external ID fields (externalId, acculynxId) for mapping. Data models support bi-directional sync with conflict resolution timestamps.
                     </div>
                   </div>
+                  {/* Distribution Supply Integrations */}
+                  <div style={{ padding: "20px 24px", borderRadius: 12, border: `2px solid #F59E0B20`, background: C.white, marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#059669", display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontSize: 16, fontWeight: 800 }}>📦</div>
+                        <div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Distribution Supply APIs</div><div style={{ fontSize: 11, color: C.gray500 }}>SRS Distribution · ABC Supply · QXO</div></div>
+                      </div>
+                      <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#FEF3C7", color: "#D97706" }}>Coming Soon</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.6, marginBottom: 12 }}>Auto-sync product pricing, availability, and ordering directly from your distribution partners into the product catalog.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      {[{ name: "SRS Distribution", code: "SRS" }, { name: "ABC Supply", code: "ABC" }, { name: "QXO", code: "QXO" }].map(d => (
+                        <div key={d.code} style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, textAlign: "center" }}>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: C.navy }}>{d.code}</div>
+                          <div style={{ fontSize: 10, color: C.gray500, marginTop: 2 }}>{d.name}</div>
+                          <div style={{ fontSize: 9, color: "#D97706", fontWeight: 600, marginTop: 4 }}>Pending API Access</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Sage Intacct */}
+                  <div style={{ padding: "20px 24px", borderRadius: 12, border: `2px solid #6366F120`, background: C.white, marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#6366F1", display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontSize: 16, fontWeight: 800 }}>SI</div>
+                        <div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Sage Intacct</div><div style={{ fontSize: 11, color: C.gray500 }}>Accounting & financial management</div></div>
+                      </div>
+                      <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#FEF3C7", color: "#D97706" }}>Coming Soon</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.6, marginBottom: 12 }}>Bi-directional sync with Sage Intacct for invoicing, GL entries, AP/AR, and financial reporting.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", marginBottom: 4 }}>CRM → Sage</div>
+                        <div style={{ fontSize: 11, color: C.gray600 }}>Invoices, Schedule of Values, Customer Records, Project Budgets</div>
+                      </div>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", marginBottom: 4 }}>Sage → CRM</div>
+                        <div style={{ fontSize: 11, color: C.gray600 }}>Payment Status, GL Balances, AR Aging, Financial Reports</div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Claude Co-Work */}
                   <div style={{ padding: "20px 24px", borderRadius: 12, border: `2px solid ${C.green}30`, background: C.white, marginBottom: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -7002,6 +7188,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                   </div>
                 </div>
               )}
+              {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} />}
               {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
               {!settingsView && currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
