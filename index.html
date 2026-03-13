@@ -718,47 +718,86 @@
               </div>
             )}
 
-            {/* STEP 2: Buildings */}
+            {/* STEP 2: Buildings (spreadsheet layout) */}
             {step === 2 && (
               <div>
-                <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, textAlign: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 10 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: C.white, fontSize: 18 }}>📄</span></div>
-                    <div style={{ textAlign: "left" }}><div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Import from RoofR Report</div><div style={{ fontSize: 12, color: C.gray500 }}>Upload a RoofR PDF or Excel to auto-fill measurements</div></div>
+                {/* RoofR upload */}
+                <div style={{ background: C.white, borderRadius: 10, padding: "14px 20px", border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 20 }}>📄</span>
+                    <div><div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>Import from RoofR</div><div style={{ fontSize: 11, color: C.gray500 }}>Upload PDF or Excel to auto-fill</div></div>
                   </div>
-                  {roofRProcessing ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0" }}><Spinner size={16} color={C.navy} /><span style={{ fontSize: 13, color: C.navy, fontWeight: 600 }}>Parsing RoofR report...</span></div> : (
-                    <div><button onClick={() => roofRInputRef.current?.click()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, margin: "0 auto" }}>{I.upload} Upload RoofR Report</button><input ref={roofRInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleRoofRUpload(e.target.files[0]); e.target.value = ""; }} /></div>
+                  {roofRProcessing ? <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} color={C.navy} /><span style={{ fontSize: 12, color: C.navy, fontWeight: 600 }}>Parsing...</span></div> : (
+                    <div><button onClick={() => roofRInputRef.current?.click()} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{I.upload} Upload</button><input ref={roofRInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleRoofRUpload(e.target.files[0]); e.target.value = ""; }} /></div>
                   )}
-                  {roofRError && <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 12, fontWeight: 500, textAlign: "left" }}>{roofRError}</div>}
                 </div>
-                {buildings.map((b, idx) => (
-                  <div key={b.id || idx} style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}`, marginBottom: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                      <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: 0 }}>Building {idx + 1}</h4>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 11, color: C.gray400 }}>{b.totalArea > 0 ? `${Math.ceil(b.totalArea / 100)} sq` : ""}</span>{buildings.length > 1 && <button onClick={() => removeBuilding(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button>}</div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-                      <div><label style={ls}>Siteplan #</label><input style={fs} value={b.siteplanNum} onChange={e => updateBuilding(idx, "siteplanNum", e.target.value)} /></div>
-                      <div><label style={ls}>RoofR #</label><input style={fs} value={b.roofrNum || ""} onChange={e => updateBuilding(idx, "roofrNum", e.target.value)} /></div>
-                      <div><label style={ls}>Phase</label><input style={fs} type="number" value={b.phase} onChange={e => updateBuilding(idx, "phase", e.target.value)} /></div>
-                      <div><label style={ls}>Pitch</label><select style={fs} value={b.predominantPitch} onChange={e => updateBuilding(idx, "predominantPitch", e.target.value)}>{["4/12", "5/12", "6/12", "7/12", "8/12", "9/12", "10/12", "12/12"].map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-                      <div><label style={ls}>Pipes</label><input style={fs} type="number" value={b.pipes} onChange={e => updateBuilding(idx, "pipes", e.target.value)} /></div>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-                      <div><label style={ls}>Total Area (sf)</label><input style={{ ...fs, fontWeight: 700 }} type="number" value={b.totalArea} onChange={e => updateBuilding(idx, "totalArea", e.target.value)} /></div>
-                      <div><label style={ls}>Pitched Area</label><input style={fs} type="number" value={b.pitchedArea} onChange={e => updateBuilding(idx, "pitchedArea", e.target.value)} /></div>
-                      <div><label style={ls}>Flat Area</label><input style={fs} type="number" value={b.flatArea} onChange={e => updateBuilding(idx, "flatArea", e.target.value)} /></div>
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em", margin: "12px 0 8px" }}>Linear Measurements (LF)</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
-                      {[["Eaves", "eaves"], ["Valleys", "valleys"], ["Hips", "hips"], ["Ridges", "ridges"], ["Rakes", "rakes"], ["Wall Flash", "wallFlashing"], ["Step Flash", "stepFlashing"]].map(([label, key]) => (
-                        <div key={key}><label style={{ ...ls, fontSize: 10 }}>{label}</label><input style={{ ...fs, fontSize: 12 }} type="number" value={b[key]} onChange={e => updateBuilding(idx, key, e.target.value)} /></div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                {roofRError && <div style={{ marginBottom: 12, padding: "8px 14px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 12 }}>{roofRError}</div>}
+
+                {/* Spreadsheet table */}
+                <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "auto" }}>
+                  {(() => {
+                    const cellStyle = { padding: "0", border: "none", borderRight: `1px solid ${C.gray100}`, borderBottom: `1px solid ${C.gray100}` };
+                    const inputStyle = { width: "100%", padding: "7px 6px", border: "none", outline: "none", fontSize: 12, color: C.navy, background: "transparent", boxSizing: "border-box", textAlign: "right" };
+                    const textInputStyle = { ...inputStyle, textAlign: "left" };
+                    const headerStyle = { padding: "6px 8px", fontSize: 9, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.04em", background: C.gray50, borderRight: `1px solid ${C.gray100}`, borderBottom: `2px solid ${C.gray200}`, whiteSpace: "nowrap", textAlign: "center" };
+                    const cols = [
+                      { key: "_num", label: "#", w: 32, type: "label" },
+                      { key: "siteplanNum", label: "Siteplan", w: 80, type: "text" },
+                      { key: "roofrNum", label: "RoofR #", w: 70, type: "text" },
+                      { key: "predominantPitch", label: "Pitch", w: 65, type: "select", options: ["4/12","5/12","6/12","7/12","8/12","9/12","10/12","12/12"] },
+                      { key: "phase", label: "Phase", w: 50, type: "num" },
+                      { key: "pipes", label: "Pipes", w: 50, type: "num" },
+                      { key: "totalArea", label: "Total Area", w: 85, type: "num", bold: true },
+                      { key: "pitchedArea", label: "Pitched", w: 75, type: "num" },
+                      { key: "flatArea", label: "Flat", w: 65, type: "num" },
+                      { key: "eaves", label: "Eaves", w: 60, type: "num" },
+                      { key: "valleys", label: "Valleys", w: 60, type: "num" },
+                      { key: "hips", label: "Hips", w: 55, type: "num" },
+                      { key: "ridges", label: "Ridges", w: 60, type: "num" },
+                      { key: "rakes", label: "Rakes", w: 60, type: "num" },
+                      { key: "wallFlashing", label: "Wall Fl.", w: 60, type: "num" },
+                      { key: "stepFlashing", label: "Step Fl.", w: 60, type: "num" },
+                      { key: "_sq", label: "Sq", w: 45, type: "calc" },
+                      { key: "_del", label: "", w: 30, type: "action" },
+                    ];
+                    return (
+                      <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1050 }}>
+                        <thead><tr>
+                          {cols.map(c => <th key={c.key} style={{ ...headerStyle, width: c.w, minWidth: c.w }}>{c.label}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {buildings.map((b, idx) => (
+                            <tr key={b.id || idx} style={{ background: idx % 2 === 0 ? C.white : C.gray50 + "80" }}>
+                              {cols.map(c => {
+                                if (c.type === "label") return <td key={c.key} style={{ ...cellStyle, padding: "7px 8px", fontSize: 11, fontWeight: 700, color: C.gray500, textAlign: "center" }}>{idx + 1}</td>;
+                                if (c.type === "calc") return <td key={c.key} style={{ ...cellStyle, padding: "7px 6px", fontSize: 11, fontWeight: 700, color: C.navy, textAlign: "center", background: C.greenBg + "60" }}>{b.totalArea > 0 ? Math.ceil(b.totalArea / 100) : "—"}</td>;
+                                if (c.type === "action") return <td key={c.key} style={{ ...cellStyle, textAlign: "center", borderRight: "none" }}>{buildings.length > 1 && <button onClick={() => removeBuilding(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 12, padding: "2px" }} title="Remove">×</button>}</td>;
+                                if (c.type === "select") return <td key={c.key} style={cellStyle}><select value={b[c.key]} onChange={e => updateBuilding(idx, c.key, e.target.value)} style={{ ...inputStyle, textAlign: "left", cursor: "pointer", padding: "6px 2px" }}>{c.options.map(o => <option key={o} value={o}>{o}</option>)}</select></td>;
+                                if (c.type === "text") return <td key={c.key} style={cellStyle}><input value={b[c.key] || ""} onChange={e => updateBuilding(idx, c.key, e.target.value)} style={textInputStyle} /></td>;
+                                return <td key={c.key} style={cellStyle}><input type="number" value={b[c.key] || 0} onChange={e => updateBuilding(idx, c.key, e.target.value)} style={{ ...inputStyle, fontWeight: c.bold ? 700 : 400 }} onFocus={e => { if (e.target.value === "0") e.target.select(); }} /></td>;
+                              })}
+                            </tr>
+                          ))}
+                          {/* Totals row */}
+                          <tr style={{ background: C.navy + "08" }}>
+                            <td style={{ ...cellStyle, padding: "7px 8px", fontSize: 10, fontWeight: 700, color: C.navy, textAlign: "center" }} colSpan={6}>TOTALS</td>
+                            <td style={{ ...cellStyle, padding: "7px 6px", fontSize: 12, fontWeight: 800, color: C.navy, textAlign: "right" }}>{buildings.reduce((s, b) => s + (b.totalArea || 0), 0).toLocaleString()}</td>
+                            <td style={{ ...cellStyle, padding: "7px 6px", fontSize: 11, color: C.gray600, textAlign: "right" }}>{buildings.reduce((s, b) => s + (b.pitchedArea || 0), 0).toLocaleString()}</td>
+                            <td style={{ ...cellStyle, padding: "7px 6px", fontSize: 11, color: C.gray600, textAlign: "right" }}>{buildings.reduce((s, b) => s + (b.flatArea || 0), 0).toLocaleString()}</td>
+                            {["eaves","valleys","hips","ridges","rakes","wallFlashing","stepFlashing"].map(k => (
+                              <td key={k} style={{ ...cellStyle, padding: "7px 6px", fontSize: 11, color: C.gray600, textAlign: "right" }}>{buildings.reduce((s, b) => s + (b[k] || 0), 0).toLocaleString()}</td>
+                            ))}
+                            <td style={{ ...cellStyle, padding: "7px 6px", fontSize: 12, fontWeight: 800, color: C.green, textAlign: "center", background: C.greenBg + "60" }}>{Math.ceil(buildings.reduce((s, b) => s + (b.totalArea || 0), 0) / 100)}</td>
+                            <td style={{ ...cellStyle, borderRight: "none" }}></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    );
+                  })()}
+                </div>
+
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 12 }}>
-                  <button onClick={addBuilding} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{I.plus} Add Building</button>
+                  <button onClick={addBuilding} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{I.plus} Add Row</button>
                   <div style={{ display: "flex", gap: 8 }}><button onClick={() => setStep(1)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button><button onClick={() => setStep(3)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Pricing</button></div>
                 </div>
               </div>
