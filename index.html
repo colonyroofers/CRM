@@ -3778,7 +3778,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     const CONTACT_TYPES = ["B2C", "B2B"];
     const LEAD_SOURCES = ["ZoomInfo", "Referral", "Website", "Cold Outreach", "Repeat Client", "Property Manager", "Other"];
 
-    function SalesModule({ user, role, entities }) {
+    function SalesModule({ user, role, entities, crmUsers, onMention }) {
       const { companies, properties, contacts, setCompanies } = entities;
       const [leadsData, saveLeads] = useFirestoreCollection("cr_sales_leads", []);
       const leadsRef = useRef(leadsData); leadsRef.current = leadsData;
@@ -3817,11 +3817,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
         if (newStage === "being_estimated") { setShowBidDatePrompt(leadId); setBidDateInput(""); setBidScopeInput(""); setBidNotesInput(""); return; }
         setLeads(prev => prev.map(l => l.id !== leadId ? l : { ...l, stage: newStage, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to ${SALES_STAGES.find(s => s.id === newStage)?.label}`, by: user.name, at: new Date().toISOString() }] }));
       };
-      const handleConfirmBidDate = () => {
+      const handleConfirmBidDate = async () => {
         if (!bidDateInput) return;
         const scopeText = bidScopeInput.trim();
         const notesText = bidNotesInput.trim();
-        setLeads(prev => prev.map(l => l.id !== showBidDatePrompt ? l : {
+        const leadId = showBidDatePrompt;
+        const theLead = leads.find(l => l.id === leadId);
+        setLeads(prev => prev.map(l => l.id !== leadId ? l : {
           ...l, stage: "being_estimated", bidDueDate: bidDateInput,
           scopeOfWork: scopeText || l.scopeOfWork || "",
           estimatingNotes: notesText || l.estimatingNotes || "",
@@ -3829,6 +3831,24 @@ Extract every identifiable expense. Use the most specific category possible. If 
             { type: "stage_change", text: `Moved to Being Estimated — Bid due ${new Date(bidDateInput).toLocaleDateString()}${scopeText ? `\nScope: ${scopeText}` : ""}${notesText ? `\nNotes: ${notesText}` : ""}`, by: user.name, at: new Date().toISOString() }
           ]
         }));
+        // Auto-create first draft estimate for this job
+        if (theLead && firestoreDb) {
+          try {
+            const leadCo = co(theLead.companyId);
+            const leadPr = pr(theLead.propertyId);
+            const draftEstimate = {
+              id: "sub_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+              leadId: leadId,
+              leadName: theLead.jobName || leadCo?.name || "Untitled",
+              project: { jobName: theLead.jobName || "", companyName: leadCo?.name || "", address: leadPr?.address || "", market: theLead.market },
+              companyId: theLead.companyId, propertyId: theLead.propertyId, contactId: theLead.contactId,
+              market: theLead.market,
+              buildings: [{ ...{ siteplanNum: "", roofRNum: "", phase: "", pipes: 0, totalArea: 0, pitchedArea: 0, flatArea: 0, predominantPitch: "", eaves: 0, valleys: 0, hips: 0, ridges: 0, rakes: 0, wallFlashing: 0, stepFlashing: 0 }, id: "b1" }],
+              status: "draft", totalPrice: 0, submittedBy: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+            };
+            await firestoreDb.collection("submissions").doc(draftEstimate.id).set(draftEstimate);
+          } catch (e) { console.error("Auto-create estimate failed:", e); }
+        }
         setShowBidDatePrompt(null); setBidDateInput(""); setBidScopeInput(""); setBidNotesInput("");
       };
       const handleDrop = (stageId, e) => { e.preventDefault(); if (dragLead && dragLead.stage !== stageId) handleStageChange(dragLead.id, stageId); setDragLead(null); };
@@ -3960,7 +3980,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               </div>
             </div>);
           })()}
-          {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} />}
+          {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} />}
         </div>
       );
     }
@@ -4053,7 +4073,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
-    function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user }) {
+    function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user, crmUsers, onMention }) {
       const { companies, properties, contacts } = entities;
       const co = companies.find(c => c.id === lead.companyId);
       const pr = properties.find(p => p.id === lead.propertyId);
@@ -4063,8 +4083,37 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [newEmailSubject, setNewEmailSubject] = useState("");
       const [newEmailBody, setNewEmailBody] = useState("");
       const [showEmailForm, setShowEmailForm] = useState(false);
+      const [showMentionSuggest, setShowMentionSuggest] = useState(false);
+      const [mentionFilter, setMentionFilter] = useState("");
       const currentStage = SALES_STAGES.find(s => s.id === lead.stage);
-      const handleAddNote = () => { if (!newNote.trim()) return; onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] }); setNewNote(""); };
+
+      const handleNoteChange = (val) => {
+        setNewNote(val);
+        const atMatch = val.match(/@(\w*)$/);
+        if (atMatch) { setShowMentionSuggest(true); setMentionFilter(atMatch[1].toLowerCase()); }
+        else { setShowMentionSuggest(false); setMentionFilter(""); }
+      };
+      const insertMention = (u) => {
+        const before = newNote.replace(/@\w*$/, "");
+        setNewNote(before + "@" + u.name + " ");
+        setShowMentionSuggest(false);
+      };
+      const filteredUsers = (crmUsers || []).filter(u => u.name?.toLowerCase().includes(mentionFilter));
+
+      const handleAddNote = () => {
+        if (!newNote.trim()) return;
+        // Parse @mentions and notify
+        const mentions = newNote.match(/@[\w\s]+/g) || [];
+        mentions.forEach(m => {
+          const name = m.slice(1).trim();
+          const target = (crmUsers || []).find(u => u.name?.toLowerCase() === name.toLowerCase());
+          if (target?.email && onMention) {
+            onMention(target.email, `mentioned you in a note on "${lead.jobName || "a project"}": "${newNote.trim().slice(0, 100)}"`);
+          }
+        });
+        onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] });
+        setNewNote("");
+      };
       const handleSetAction = (a) => onUpdate(lead.id, { nextAction: a, activities: [...(lead.activities || []), { type: "action", text: `Next: ${a}`, by: user.name, at: new Date().toISOString() }] });
       const handleLogEmail = () => {
         if (!newEmailSubject.trim()) return;
@@ -4189,9 +4238,18 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 })()}
               </div>)}
               {activeTab === "activity" && (<div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-                  <input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note..." style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} />
+                <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}>
+                  <input value={newNote} onChange={e => handleNoteChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note... (use @name to mention)" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} />
                   <button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button>
+                  {showMentionSuggest && filteredUsers.length > 0 && (
+                    <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 99, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", maxHeight: 160, overflowY: "auto", width: 200, marginTop: 4 }}>
+                      {filteredUsers.slice(0, 6).map(u => (
+                        <div key={u.email} onClick={() => insertMention(u)} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: C.navy, fontWeight: 500 }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = C.white}>
+                          {u.name} <span style={{ color: C.gray400, fontSize: 10 }}>{u.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {(lead.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", stage_change: "📋", note: "📝", action: "🎯" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
               </div>)}
@@ -4496,7 +4554,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     const PRIORITY_COLORS = { Emergency: C.red, High: "#F97316", Medium: C.yellow, Low: C.gray400 };
     const TSTATUS_COLORS = { New: C.blue, Dispatched: "#8B5CF6", "In Progress": C.green, "On Hold": C.yellow, Complete: "#6366F1", Closed: C.gray400 };
 
-    function ServiceModule({ user, role, entities }) {
+    function ServiceModule({ user, role, entities, crmUsers, onMention }) {
       const { companies, properties, contacts, setCompanies } = entities;
       const [ticketsData, saveTickets] = useFirestoreCollection("cr_service_tickets", []);
       const ticketsRef = useRef(ticketsData); ticketsRef.current = ticketsData;
@@ -4578,7 +4636,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             ) : <div style={{ padding: 48, textAlign: "center", background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 36, opacity: 0.2, marginBottom: 12 }}>🔧</div><p style={{ fontSize: 13, color: C.gray400 }}>No tickets found</p></div>}
           </div>
           {showCreate && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreate(false)} onCreate={handleCreate} onCreateEntity={handleCreateEntity} />}
-          {selectedTicket && <TicketDetailPanel ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} co={co} prop={pr} ct={ct} onClose={() => setSelectedTicket(null)} onUpdate={handleUpdate} onDelete={handleDelete} user={user} />}
+          {selectedTicket && <TicketDetailPanel ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} co={co} prop={pr} ct={ct} onClose={() => setSelectedTicket(null)} onUpdate={handleUpdate} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} />}
         </div>
       );
     }
@@ -4628,13 +4686,41 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
-    function TicketDetailPanel({ ticket, co, prop, ct, onClose, onUpdate, onDelete, user }) {
+    function TicketDetailPanel({ ticket, co, prop, ct, onClose, onUpdate, onDelete, user, crmUsers, onMention }) {
       const [activeTab, setActiveTab] = useState("details");
       const [newNote, setNewNote] = useState("");
+      const [showMentionSuggest, setShowMentionSuggest] = useState(false);
+      const [mentionFilter, setMentionFilter] = useState("");
       const company = co(ticket.companyId); const property = prop(ticket.propertyId); const contact = ct(ticket.contactId);
       const pc = PRIORITY_COLORS[ticket.priority] || C.gray400; const sc = TSTATUS_COLORS[ticket.status] || C.gray400;
       const handleStatusChange = (s) => onUpdate(ticket.id, { status: s, activities: [...(ticket.activities || []), { type: "status", text: `Status → ${s}`, by: user.name, at: new Date().toISOString() }] });
-      const handleAddNote = () => { if (!newNote.trim()) return; onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] }); setNewNote(""); };
+
+      const handleNoteChange = (val) => {
+        setNewNote(val);
+        const atMatch = val.match(/@(\w*)$/);
+        if (atMatch) { setShowMentionSuggest(true); setMentionFilter(atMatch[1].toLowerCase()); }
+        else { setShowMentionSuggest(false); setMentionFilter(""); }
+      };
+      const insertMention = (u) => {
+        const before = newNote.replace(/@\w*$/, "");
+        setNewNote(before + "@" + u.name + " ");
+        setShowMentionSuggest(false);
+      };
+      const filteredMentionUsers = (crmUsers || []).filter(u => u.name?.toLowerCase().includes(mentionFilter));
+
+      const handleAddNote = () => {
+        if (!newNote.trim()) return;
+        const mentions = newNote.match(/@[\w\s]+/g) || [];
+        mentions.forEach(m => {
+          const name = m.slice(1).trim();
+          const target = (crmUsers || []).find(u => u.name?.toLowerCase() === name.toLowerCase());
+          if (target?.email && onMention) {
+            onMention(target.email, `mentioned you in a note on ticket "${ticket.subject || "a ticket"}": "${newNote.trim().slice(0, 100)}"`);
+          }
+        });
+        onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] });
+        setNewNote("");
+      };
 
       return (
         <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }}>
@@ -4684,7 +4770,17 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {ticket.description && <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{ticket.description}</div>}
               </div>}
               {activeTab === "activity" && <div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note..." style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} /><button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button></div>
+                <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}><input value={newNote} onChange={e => handleNoteChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note... (use @name to mention)" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} /><button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button>
+                  {showMentionSuggest && filteredMentionUsers.length > 0 && (
+                    <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 99, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", maxHeight: 160, overflowY: "auto", width: 200, marginTop: 4 }}>
+                      {filteredMentionUsers.slice(0, 6).map(u => (
+                        <div key={u.email} onClick={() => insertMention(u)} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: C.navy, fontWeight: 500 }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = C.white}>
+                          {u.name} <span style={{ color: C.gray400, fontSize: 10 }}>{u.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {(ticket.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", status: "📋", note: "📝", email: "📧" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
               </div>}
               {activeTab === "email" && <div>
@@ -5418,6 +5514,35 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const setCrmUsers = useCallback(u => { const n = typeof u === "function" ? u(crmUsersRef.current) : u; saveCrmUsers(n); }, [saveCrmUsers]);
       const crmUsers = crmUsersData;
 
+      // ── MENTIONS / NOTIFICATIONS ──────────────────────────────
+      const [mentionsData, saveMentions] = useFirestoreCollection("cr_mentions", []);
+      const mentionsRef = useRef(mentionsData); mentionsRef.current = mentionsData;
+      const setMentions = useCallback(u => { const n = typeof u === "function" ? u(mentionsRef.current) : u; saveMentions(n); }, [saveMentions]);
+      const [showNotifications, setShowNotifications] = useState(false);
+      const notifRef = useRef(null);
+
+      useEffect(() => {
+        const handle = (e) => { if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotifications(false); };
+        if (showNotifications) document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+      }, [showNotifications]);
+
+      const myMentions = mentionsData.filter(m => m.targetEmail?.toLowerCase() === user?.email?.toLowerCase());
+      const unreadCount = myMentions.filter(m => !m.read).length;
+
+      const addMention = useCallback((targetEmail, context) => {
+        const mention = { id: generateId(), targetEmail, from: user.name, fromEmail: user.email, context, createdAt: new Date().toISOString(), read: false };
+        setMentions(prev => [mention, ...prev]);
+      }, [user, setMentions]);
+
+      const markMentionRead = useCallback((id) => {
+        setMentions(prev => prev.map(m => m.id === id ? { ...m, read: true } : m));
+      }, [setMentions]);
+
+      const markAllRead = useCallback(() => {
+        setMentions(prev => prev.map(m => m.targetEmail?.toLowerCase() === user?.email?.toLowerCase() ? { ...m, read: true } : m));
+      }, [user, setMentions]);
+
       const sharedEntities = { companies: companiesData, properties: propertiesData, contacts: contactsData, setCompanies, setProperties, setContacts };
 
       if (loading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navyLight})` }}><Spinner size={24} color="rgba(255,255,255,0.5)" /></div>;
@@ -5553,7 +5678,37 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
                 {modules.map(m => <button key={m.key} onClick={() => { setActiveModule(m.key); setSettingsView(null); }} style={{ padding: "8px 14px", border: "none", borderRadius: "6px 6px 0 0", background: currentModule === m.key && !settingsView ? "rgba(255,255,255,0.15)" : "transparent", color: currentModule === m.key && !settingsView ? C.white : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, borderBottom: currentModule === m.key && !settingsView ? `2px solid ${C.red}` : "2px solid transparent", whiteSpace: "nowrap" }}><span style={{ fontSize: 13 }}>{m.icon}</span> {m.label}</button>)}
               </div>
             </div>
-            {/* Profile area with dropdown */}
+            {/* Notifications + Profile area */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* Notification bell */}
+              <div ref={notifRef} style={{ position: "relative" }}>
+                <button onClick={() => setShowNotifications(!showNotifications)} style={{ position: "relative", background: showNotifications ? "rgba(255,255,255,0.15)" : "transparent", border: "none", borderRadius: 8, padding: "6px 8px", cursor: "pointer", color: "rgba(255,255,255,0.7)", fontSize: 18, display: "flex", alignItems: "center" }} title="Notifications">
+                  🔔
+                  {unreadCount > 0 && <span style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 8, background: C.red, color: C.white, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{unreadCount > 9 ? "9+" : unreadCount}</span>}
+                </button>
+                {showNotifications && (
+                  <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 8, width: 360, maxHeight: 480, background: C.white, borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05)", overflow: "hidden", zIndex: 9999 }}>
+                    <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Notifications</span>
+                      {unreadCount > 0 && <button onClick={markAllRead} style={{ fontSize: 11, color: C.blue, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Mark all read</button>}
+                    </div>
+                    <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                      {myMentions.length === 0 ? (
+                        <div style={{ padding: 32, textAlign: "center", color: C.gray400, fontSize: 13 }}>No notifications yet</div>
+                      ) : myMentions.slice(0, 20).map(m => (
+                        <div key={m.id} onClick={() => markMentionRead(m.id)} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, background: m.read ? C.white : "#EFF6FF", cursor: "pointer", transition: "background 0.15s" }} onMouseEnter={e => { if (m.read) e.currentTarget.style.background = C.gray50; }} onMouseLeave={e => e.currentTarget.style.background = m.read ? C.white : "#EFF6FF"}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{m.from}</span>
+                            <span style={{ fontSize: 10, color: C.gray400 }}>{new Date(m.createdAt).toLocaleDateString()}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.4 }}>{m.context}</div>
+                          {!m.read && <div style={{ width: 6, height: 6, borderRadius: 3, background: C.blue, position: "absolute", right: 16, marginTop: -18 }} />}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             <div ref={menuRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: roleColor + "30", color: roleColor, letterSpacing: "0.05em" }}>{ROLE_PRESETS[role]?.label || role}</span>
               <div onClick={() => setShowMenu(!showMenu)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "4px 8px", borderRadius: 8, background: showMenu ? "rgba(255,255,255,0.1)" : "transparent", transition: "background 0.15s" }}>
@@ -5594,11 +5749,12 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
                 </div>
               )}
             </div>
+            </div>{/* end notifications+profile wrapper */}
           </div>
           {currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
           {currentModule === "production" && <ProductionModule user={user} role={role} />}
-          {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
-          {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
+          {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} />}
+          {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} />}
           {currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} />}
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
