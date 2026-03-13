@@ -3941,7 +3941,47 @@ Extract every identifiable expense. Use the most specific category possible. If 
               <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>Product Catalog</h2>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Products, vendors, assemblies & systems — used for estimates and submittal packages</p>
             </div>
-            <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.red, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{addLabels[activeTab]}</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {(activeTab === "products" || activeTab === "vendors") && <>
+                <button onClick={() => {
+                  const isVendor = activeTab === "vendors";
+                  const headers = isVendor ? "name,type,contact,phone,email,address,notes" : "name,manufacturer,sku,category,unit,price,notes";
+                  const example = isVendor ? "ABC Supply,Distributor,John Smith,555-0100,john@abc.com,123 Main St,Primary distributor" : "GAF Timberline HDZ,GAF,0601400,Shingles,BUNDLE,115.00,Lifetime warranty architectural shingle";
+                  const csv = headers + "\n" + example;
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a"); a.href = url; a.download = `${activeTab}_import_template.csv`; a.click(); URL.revokeObjectURL(url);
+                }} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>📥 Template</button>
+                <label style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center" }}>
+                  📤 Import CSV
+                  <input type="file" accept=".csv" style={{ display: "none" }} onChange={e => {
+                    const file = e.target.files[0]; if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      const lines = ev.target.result.split("\n").filter(l => l.trim());
+                      if (lines.length < 2) { alert("CSV must have a header row and at least one data row."); return; }
+                      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+                      const rows = lines.slice(1).map(line => {
+                        const vals = line.split(",").map(v => v.trim());
+                        const obj = {}; headers.forEach((h, i) => { obj[h] = vals[i] || ""; }); return obj;
+                      });
+                      if (activeTab === "vendors") {
+                        const newVendors = rows.filter(r => r.name).map(r => ({ id: generateId(), name: r.name, type: r.type || "Distributor", contact: r.contact || "", phone: r.phone || "", email: r.email || "", address: r.address || "", notes: r.notes || "", createdAt: new Date().toISOString() }));
+                        setVendors(prev => [...newVendors, ...prev]);
+                        alert(`Imported ${newVendors.length} vendors!`);
+                      } else {
+                        const newProducts = rows.filter(r => r.name).map(r => ({ id: generateId(), name: r.name, manufacturer: r.manufacturer || "", sku: r.sku || "", category: r.category || "Shingles", unit: r.unit || "EACH", price: Number(r.price) || 0, notes: r.notes || "", dataSheets: [], createdAt: new Date().toISOString() }));
+                        setProducts(prev => [...newProducts, ...prev]);
+                        alert(`Imported ${newProducts.length} products!`);
+                      }
+                    };
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }} />
+                </label>
+              </>}
+              <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: C.red, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{addLabels[activeTab]}</button>
+            </div>
           </div>
 
           {/* Tab bar */}
@@ -6776,7 +6816,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                 {!sidebarOpen && (
                   <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: `1px solid ${C.gray300}`, borderRadius: 6, padding: "6px 8px", cursor: "pointer", fontSize: 16, color: C.navy, display: "flex", alignItems: "center" }} title="Open menu">☰</button>
                 )}
-                <span style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{settingsView === "profile" ? "My Profile" : settingsView === "users" ? "User Management" : modules.find(m => m.key === currentModule)?.label || ""}</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{settingsView === "profile" ? "My Profile" : settingsView === "users" ? "User Management" : settingsView === "integrations" ? "Integrations" : modules.find(m => m.key === currentModule)?.label || ""}</span>
               </div>
               {/* Notifications + Profile */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -6835,6 +6875,12 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                             <span style={{ fontSize: 16 }}>👥</span> User Management
                           </button>
                         )}
+                        {isAdmin && (
+                          <button onClick={() => { setSettingsView("integrations"); setShowMenu(false); }} style={{ width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderRadius: 8, fontSize: 13, color: C.navy, fontWeight: 500, textAlign: "left" }}
+                            onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            <span style={{ fontSize: 16 }}>🔗</span> Integrations
+                          </button>
+                        )}
                         <div style={{ height: 1, background: C.gray200, margin: "4px 0" }} />
                         <button onClick={() => { setShowMenu(false); signOut(); }} style={{ width: "100%", padding: "10px 12px", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderRadius: 8, fontSize: 13, color: C.red, fontWeight: 500, textAlign: "left" }}
                           onMouseEnter={e => e.currentTarget.style.background = C.redBg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -6857,6 +6903,50 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               )}
               {settingsView === "users" && isAdmin && (
                 <UserManagementModule user={user} role={role} crmUsers={crmUsers} setCrmUsers={setCrmUsers} />
+              )}
+              {settingsView === "integrations" && isAdmin && (
+                <div style={{ maxWidth: 800, margin: "0 auto", padding: "32px" }}>
+                  <button onClick={() => setSettingsView(null)} style={{ background: C.gray100, border: "none", cursor: "pointer", color: C.navy, padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>← Back to CRM</button>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Integrations</h2>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 24px" }}>Connect Colony Roofers CRM with external systems for bi-directional data sync.</p>
+                  {/* Acculynx */}
+                  <div style={{ padding: "20px 24px", borderRadius: 12, border: `2px solid ${C.navy}20`, background: C.white, marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#1E3A5F", display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontSize: 18, fontWeight: 800 }}>AX</div>
+                        <div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>AccuLynx</div><div style={{ fontSize: 11, color: C.gray500 }}>Roofing project management & production</div></div>
+                      </div>
+                      <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: "#FEF3C7", color: "#D97706" }}>Coming Soon</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.6, marginBottom: 12 }}>
+                      Two-way sync between Colony CRM and AccuLynx. When connected, the following data will sync automatically:
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", marginBottom: 4 }}>CRM → AccuLynx</div>
+                        <div style={{ fontSize: 11, color: C.gray600 }}>Contacts, Companies, Properties, Awarded Jobs, Estimates, Documents</div>
+                      </div>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", marginBottom: 4 }}>AccuLynx → CRM</div>
+                        <div style={{ fontSize: 11, color: C.gray600 }}>Production Status, Work Orders, Material Orders, Change Orders, Completion Data</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1E40AF" }}>
+                      <strong>Integration Ready:</strong> All CRM objects include external ID fields (externalId, acculynxId) for mapping. Data models support bi-directional sync with conflict resolution timestamps.
+                    </div>
+                  </div>
+                  {/* Claude Co-Work */}
+                  <div style={{ padding: "20px 24px", borderRadius: 12, border: `2px solid ${C.green}30`, background: C.white, marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#D97706", display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontSize: 16 }}>🤖</div>
+                        <div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>Claude Co-Work</div><div style={{ fontSize: 11, color: C.gray500 }}>AI assistant for reports, updates & automation</div></div>
+                      </div>
+                      <span style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: C.greenBg, color: C.green }}>Active</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.gray600 }}>Connected via Firestore API. Claude can read/write CRM data, generate reports, and perform automated tasks.</div>
+                  </div>
+                </div>
               )}
               {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
