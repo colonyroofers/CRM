@@ -476,7 +476,7 @@
         };
         try { const existing = JSON.parse(localStorage.getItem("cr_production_projects") || "[]"); existing.unshift(newProject); localStorage.setItem("cr_production_projects", JSON.stringify(existing)); if (firestoreDb) await firestoreDb.collection("cr_production_projects").doc("data").set({ items: existing, updatedAt: new Date().toISOString() }); } catch (e) {}
         if (sub.leadId && setSalesLeads) {
-          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "closed_won", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "awarded", text: `Awarded — moved to Production with budget`, by: user.name, at: new Date().toISOString() }] } : l));
+          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "awarded", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "awarded", text: `Awarded — moved to Production with budget`, by: user.name, at: new Date().toISOString() }] } : l));
         }
         await refresh(); setShowAwardPicker(null);
         alert(`"${newProject.name}" awarded and added to Production!`);
@@ -3760,12 +3760,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     const SALES_STAGES = [
       { id: "new_lead", label: "New Lead", color: "#94A3B8" },
-      { id: "contacted", label: "Contacted", color: "#3B82F6" },
-      { id: "meeting_set", label: "Meeting Set", color: "#8B5CF6" },
-      { id: "proposal_sent", label: "Proposal Sent", color: "#F59E0B" },
+      { id: "appointment_scheduled", label: "Appointment Scheduled", color: "#3B82F6" },
+      { id: "inspected", label: "Inspected", color: "#8B5CF6" },
       { id: "being_estimated", label: "Being Estimated", color: "#6366F1" },
+      { id: "estimate_approved", label: "Estimate Approved", color: "#06B6D4" },
+      { id: "proposal_sent", label: "Proposal Sent", color: "#F59E0B" },
       { id: "negotiation", label: "Negotiation", color: "#EC4899" },
-      { id: "closed_won", label: "Closed Won", color: "#10B981" },
+      { id: "awarded", label: "Awarded", color: "#10B981" },
       { id: "closed_lost", label: "Closed Lost", color: "#EF4444" },
     ];
     const PROPERTY_TYPES = ["Residential", "Apartment Complex", "HOA / Condo", "Office / Commercial", "Retail", "Industrial / Warehouse", "Church / Non-Profit", "Government", "Other"];
@@ -3801,9 +3802,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
         if (search) { const s = search.toLowerCase(); if (!leadName(l).toLowerCase().includes(s) && !leadContact(l).toLowerCase().includes(s)) return false; }
         return true;
       });
-      const totalPipeline = filtered.filter(l => !["closed_won", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
-      const wonValue = filtered.filter(l => l.stage === "closed_won").reduce((s, l) => s + (l.estimatedValue || 0), 0);
-      const openLeads = filtered.filter(l => !["closed_won", "closed_lost"].includes(l.stage)).length;
+      const totalPipeline = filtered.filter(l => !["awarded", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
+      const wonValue = filtered.filter(l => l.stage === "awarded").reduce((s, l) => s + (l.estimatedValue || 0), 0);
+      const openLeads = filtered.filter(l => !["awarded", "closed_lost"].includes(l.stage)).length;
 
       const handleCreate = (lead) => { setLeads(prev => [{ ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Project created", by: user.name, at: new Date().toISOString() }] }, ...prev]); setShowCreate(false); };
       const handleUpdate = (id, updates) => setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
@@ -4031,10 +4032,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {selectedProp && <div style={{ marginBottom: 2 }}>🏠 {selectedProp.name} — {selectedProp.address || "No address"}</div>}
                 {selectedContact && <div>👤 {selectedContact.name} — {selectedContact.email || selectedContact.phone || ""}</div>}
               </div>}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div>
                 <div><label style={ls}>Source</label><select style={fs} value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}>{LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-                <div><label style={ls}>Est. Value ($)</label><input style={fs} type="number" value={form.estimatedValue} onChange={e => setForm(f => ({ ...f, estimatedValue: Number(e.target.value) }))} /></div>
               </div>
               <div><label style={ls}>Notes</label><textarea style={{ ...fs, minHeight: 60, resize: "vertical" }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></div>
               {validationError && <div style={{ padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, fontWeight: 600 }}>{validationError}</div>}
@@ -4126,7 +4126,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{["Schedule Meeting", "Send Proposal", "Follow Up", "Site Visit"].map(a => <button key={a} onClick={() => handleSetAction(a)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${lead.nextAction === a ? C.red + "60" : C.gray300}`, background: lead.nextAction === a ? C.redBg : C.white, color: lead.nextAction === a ? C.red : C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{a}</button>)}</div></div>
                 {(ct?.email || lead.contactEmail) && <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 10px" }}>Email</h4>
                 <button onClick={() => { const email = ct?.email || lead.contactEmail; const name = ct?.name || lead.contactName; window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(email)}&su=${encodeURIComponent(`Colony Roofers — ${co?.name || lead.company}`)}&body=${encodeURIComponent(`Hey ${(name || "").split(" ")[0]},\n\nHope all is well.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`)}`, "_blank"); onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "email", text: `Email drafted to ${email}`, by: user.name, at: new Date().toISOString() }] }); }} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>📧 Open in Gmail</button></div>}
-                {lead.stage === "closed_won" && <div style={{ padding: "16px", borderRadius: 10, border: `2px solid ${C.green}40`, background: C.greenBg + "40" }}><h4 style={{ fontSize: 13, fontWeight: 700, color: C.green, margin: "0 0 6px" }}>Won — Ready for Estimating</h4><p style={{ fontSize: 12, color: C.gray600, margin: "0 0 8px" }}>Switch to the Estimating tab to create an estimate for this job.</p></div>}
+                {lead.stage === "awarded" && <div style={{ padding: "16px", borderRadius: 10, border: `2px solid ${C.green}40`, background: C.greenBg + "40" }}><h4 style={{ fontSize: 13, fontWeight: 700, color: C.green, margin: "0 0 6px" }}>Awarded — Moving to Production</h4><p style={{ fontSize: 12, color: C.gray600, margin: "0 0 8px" }}>This project has been awarded and will appear on the Production board.</p></div>}
               </div>)}
             </div>
           </div>
@@ -4683,8 +4683,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       };
 
       const rows = buildRows().filter(r => !search || r.name?.toLowerCase().includes(search.toLowerCase()));
-      const totalPipeline = leads.filter(l => !["closed_won", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
-      const totalWon = leads.filter(l => l.stage === "closed_won").reduce((s, l) => s + (l.estimatedValue || 0), 0);
+      const totalPipeline = leads.filter(l => !["awarded", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
+      const totalWon = leads.filter(l => l.stage === "awarded").reduce((s, l) => s + (l.estimatedValue || 0), 0);
       const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status)).length;
 
       return (
@@ -4719,8 +4719,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   {reportType === "company" && <th style={{ padding: "10px 8px", textAlign: "center", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Properties</th>}
                 </tr></thead>
                 <tbody>{rows.map(r => {
-                  const pipeline = r.leads.filter(l => !["closed_won", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
-                  const won = r.leads.filter(l => l.stage === "closed_won").reduce((s, l) => s + (l.estimatedValue || 0), 0);
+                  const pipeline = r.leads.filter(l => !["awarded", "closed_lost"].includes(l.stage)).reduce((s, l) => s + (l.estimatedValue || 0), 0);
+                  const won = r.leads.filter(l => l.stage === "awarded").reduce((s, l) => s + (l.estimatedValue || 0), 0);
                   const openTix = r.tickets.filter(t => !["Complete", "Closed"].includes(t.status)).length;
                   return (
                     <tr key={r.id} style={{ borderTop: `1px solid ${C.gray100}` }}>
@@ -4762,7 +4762,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "create_property", description: "Create a new property linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" } }, required: ["name"] } },
         { name: "create_contact", description: "Create a new contact linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" } }, required: ["name"] } },
         { name: "create_lead", description: "Create a new sales lead/opportunity in the pipeline", input_schema: { type: "object", properties: { company: { type: "string", description: "Company name if not linking to existing" }, companyId: { type: "string", description: "ID of existing company" }, propertyId: { type: "string" }, contactId: { type: "string" }, contactName: { type: "string" }, contactEmail: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, source: { type: "string" }, estimatedValue: { type: "number" }, notes: { type: "string" } }, required: [] } },
-        { name: "update_lead", description: "Update an existing sales lead — change stage, value, notes, next action, estimator, etc.", input_schema: { type: "object", properties: { leadId: { type: "string" }, stage: { type: "string", enum: ["new_lead", "contacted", "meeting_set", "proposal_sent", "being_estimated", "negotiation", "closed_won", "closed_lost"] }, estimatedValue: { type: "number" }, nextAction: { type: "string" }, estimator: { type: "string", description: "Assign an estimator by name" }, notes: { type: "string" } }, required: ["leadId"] } },
+        { name: "update_lead", description: "Update an existing sales lead — change stage, value, notes, next action, estimator, etc.", input_schema: { type: "object", properties: { leadId: { type: "string" }, stage: { type: "string", enum: ["new_lead", "contacted", "meeting_set", "proposal_sent", "being_estimated", "negotiation", "awarded", "closed_lost"] }, estimatedValue: { type: "number" }, nextAction: { type: "string" }, estimator: { type: "string", description: "Assign an estimator by name" }, notes: { type: "string" } }, required: ["leadId"] } },
         { name: "create_ticket", description: "Create a new service ticket", input_schema: { type: "object", properties: { subject: { type: "string" }, type: { type: "string", enum: ["Leak / Repair", "Warranty Claim", "Scheduled Maintenance", "Inspection Follow-Up", "Emergency", "Other"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, companyId: { type: "string" }, propertyId: { type: "string" }, contactId: { type: "string" }, description: { type: "string" }, assignedTo: { type: "string" } }, required: ["subject"] } },
         { name: "update_ticket", description: "Update a service ticket — change status, priority, assignment, add notes", input_schema: { type: "object", properties: { ticketId: { type: "string" }, status: { type: "string", enum: ["New", "Dispatched", "In Progress", "On Hold", "Complete", "Closed"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, assignedTo: { type: "string" }, notes: { type: "string" } }, required: ["ticketId"] } },
         { name: "search_crm", description: "Search across all CRM data — companies, properties, contacts, leads, tickets. Use this to find IDs before creating or updating records.", input_schema: { type: "object", properties: { query: { type: "string", description: "Search term" }, type: { type: "string", enum: ["all", "companies", "properties", "contacts", "leads", "tickets"] } }, required: ["query"] } },
@@ -4838,8 +4838,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const buildContext = () => {
         const leads = salesLeads || [];
         const tickets = serviceTickets || [];
-        const openLeads = leads.filter(l => !["closed_won", "closed_lost"].includes(l.stage));
-        const wonLeads = leads.filter(l => l.stage === "closed_won");
+        const openLeads = leads.filter(l => !["awarded", "closed_lost"].includes(l.stage));
+        const wonLeads = leads.filter(l => l.stage === "awarded");
         const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status));
 
         return `You are the AI assistant for Colony Roofers CRM. You can both ANSWER QUESTIONS and TAKE ACTIONS using tools. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. Currently viewing: ${currentModule} module.
@@ -4859,7 +4859,7 @@ ${tickets.slice(0, 12).map(t => `  [id:${t.id}] ${t.subject} | ${companies.find(
 
 TEAM: Zach (Owner), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
 MARKETS: Atlanta (ATL), Tampa (TPA), Dallas (DFW)
-SALES STAGES: new_lead, contacted, meeting_set, proposal_sent, being_estimated, negotiation, closed_won, closed_lost
+SALES STAGES: new_lead, appointment_scheduled, inspected, being_estimated, estimate_approved, proposal_sent, negotiation, awarded, closed_lost
 TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       };
 
