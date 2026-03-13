@@ -487,6 +487,7 @@
 
       // New estimate state
       const [selectedLeadId, setSelectedLeadId] = useState("");
+      const [estimateRoofType, setEstimateRoofType] = useState(""); // Shingle, Tile, TPO, Combo
       const [buildings, setBuildings] = useState([{ ...EMPTY_BUILDING, id: "b1" }]);
       const [materials, setMat] = useState({ ...DEFAULT_MATERIALS });
       const [labor, setLab] = useState({ ...DEFAULT_LABOR });
@@ -519,32 +520,42 @@
         const jobEsts = estimatesForLead(job.id);
         const jobApproved = approvedForLead(job.id);
         const jobPending = pendingForLead(job.id);
-        // Determine current column
-        const currentCol = !job.estimator ? "unassigned" : (jobApproved.length > 0 ? "approved" : (jobPending.length > 0 ? "in_progress" : "assigned"));
-        if (targetColId === currentCol) { setDraggedJobId(null); return; } // no-op same column
+        // Determine current column using estimatingPhase or computed
+        const getCol = (j) => {
+          if (j.estimatingPhase) return j.estimatingPhase;
+          return !j.estimator ? "unassigned" : (approvedForLead(j.id).length > 0 ? "approved" : (pendingForLead(j.id).length > 0 ? "in_progress" : "assigned"));
+        };
+        const currentCol = getCol(job);
+        if (targetColId === currentCol) { setDraggedJobId(null); return; }
+        // Set the estimatingPhase on the lead to move it to the target column
+        const setPhase = (phase) => {
+          setSalesLeads(prev => prev.map(l => l.id === job.id ? { ...l, estimatingPhase: phase, activities: [...(l.activities || []), { type: "phase_change", text: `Moved to ${phase} on estimating board`, by: user.name, at: new Date().toISOString() }] } : l));
+        };
         if (targetColId === "unassigned") {
           if (job.estimator && confirm("Remove estimator assignment?")) { handleAssignEstimator(job.id, ""); }
+          setPhase("unassigned");
         } else if (targetColId === "assigned") {
           if (!job.estimator) {
             const name = prompt("Assign estimator (enter name):");
             if (name) handleAssignEstimator(job.id, name);
           }
-          // If already has estimator, moving back to assigned is just a visual reclassification — estimates would need removal
+          setPhase("assigned");
         } else if (targetColId === "in_progress") {
           if (!job.estimator) {
             const name = prompt("Assign estimator first (enter name):");
-            if (name) { handleAssignEstimator(job.id, name); startEstimate(job.id); }
-          } else if (jobEsts.length === 0) {
-            startEstimate(job.id);
+            if (name) handleAssignEstimator(job.id, name);
           }
-          // Already in progress if has estimator + pending estimates
+          setPhase("in_progress");
         } else if (targetColId === "approved") {
           if (jobPending.length > 0 && (role === "admin" || role === "lead_estimator")) {
             if (confirm(`Approve ${jobPending.length} pending estimate(s)?`)) { jobPending.forEach(est => handleApprove(est)); }
+            setPhase("approved");
           } else if (jobPending.length > 0) {
             alert("Only admins or lead estimators can approve estimates.");
           } else if (jobEsts.length === 0) {
             alert("Create and submit an estimate before approving.");
+          } else {
+            setPhase("approved");
           }
         }
         setDraggedJobId(null);
@@ -565,11 +576,16 @@
       const approvedForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "approved");
       const pendingForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "pending");
 
+      // Kanban columns use explicit estimatingPhase if set, otherwise computed from data
+      const getJobCol = (j) => {
+        if (j.estimatingPhase) return j.estimatingPhase;
+        return !j.estimator ? "unassigned" : (approvedForLead(j.id).length > 0 ? "approved" : (pendingForLead(j.id).length > 0 ? "in_progress" : "assigned"));
+      };
       const kanbanCols = [
-        { id: "unassigned", label: "Unassigned", color: "#94A3B8", jobs: estimatingJobs.filter(j => !j.estimator) },
-        { id: "assigned", label: "Assigned", color: "#6366F1", jobs: estimatingJobs.filter(j => j.estimator && estimatesForLead(j.id).length === 0) },
-        { id: "in_progress", label: "Estimating", color: "#F59E0B", jobs: estimatingJobs.filter(j => j.estimator && pendingForLead(j.id).length > 0 && approvedForLead(j.id).length === 0) },
-        { id: "approved", label: "Approved", color: "#10B981", jobs: estimatingJobs.filter(j => approvedForLead(j.id).length > 0) },
+        { id: "unassigned", label: "Unassigned", color: "#94A3B8", jobs: estimatingJobs.filter(j => getJobCol(j) === "unassigned") },
+        { id: "assigned", label: "Assigned", color: "#6366F1", jobs: estimatingJobs.filter(j => getJobCol(j) === "assigned") },
+        { id: "in_progress", label: "Estimating", color: "#F59E0B", jobs: estimatingJobs.filter(j => getJobCol(j) === "in_progress") },
+        { id: "approved", label: "Approved", color: "#10B981", jobs: estimatingJobs.filter(j => getJobCol(j) === "approved") },
       ];
 
       const handleAssignEstimator = (leadId, estimatorName) => {
@@ -660,7 +676,7 @@
         const co = lead ? (companies || []).find(c => c.id === lead.companyId) : null;
         const pr = lead ? (properties || []).find(p => p.id === lead.propertyId) : null;
         const project = { jobName: lead?.jobName || (co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof"), companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas" };
-        const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market };
+        const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market, estimateRoofType };
         const saved = await saveSubmission(data);
         if (saved) {
           if (setSalesLeads) { setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`, by: user.name, at: new Date().toISOString() }] } : l)); }
@@ -867,11 +883,11 @@
                         {/* Job details — editable fields */}
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
                           <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Company</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{co?.name || "—"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Estimator</div><input value={job.estimator || ""} onChange={e => handleUpdateJobField(job.id, "estimator", e.target.value)} placeholder="Assign estimator" style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }} /></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Estimator</div><select value={job.estimator || ""} onChange={e => handleUpdateJobField(job.id, "estimator", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="">— Select —</option>{(crmUsers || []).map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${u.role})` : ""}</option>)}</select></div>
                           <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Bid Due</div><input type="date" value={job.bidDueDate || ""} onChange={e => handleUpdateJobField(job.id, "bidDueDate", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }} /></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Type</div><select value={job.constructionType || ""} onChange={e => handleUpdateJobField(job.id, "constructionType", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Replacement">Replacement</option><option value="New Construction">New Construction</option></select></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Roof Slope</div><select value={job.roofSlope || ""} onChange={e => handleUpdateJobField(job.id, "roofSlope", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Steep Slope">Steep Slope</option><option value="Low-Slope">Low-Slope</option></select></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Material</div><select value={job.estimateMaterial || ""} onChange={e => handleUpdateJobField(job.id, "estimateMaterial", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Shingles">Shingles</option><option value="Tile">Tile</option><option value="TPO">TPO</option><option value="Metal">Metal</option><option value="Modified Bitumen">Modified Bitumen</option><option value="EPDM">EPDM</option><option value="PVC">PVC</option></select></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Type</div><select value={job.constructionType || ""} onChange={e => handleUpdateJobField(job.id, "constructionType", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="">— Select —</option><option value="Replacement">Replacement</option><option value="New Construction">New Construction</option></select></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Roof Slope</div><select value={job.roofSlope || ""} onChange={e => handleUpdateJobField(job.id, "roofSlope", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="">— Select —</option><option value="Steep Slope">Steep Slope</option><option value="Low-Slope">Low-Slope</option></select></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Material</div><select value={job.estimateMaterial || ""} onChange={e => handleUpdateJobField(job.id, "estimateMaterial", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="">— Select —</option><option value="Shingles">Shingles</option><option value="Tile">Tile</option><option value="TPO">TPO</option><option value="Combo">Combo</option><option value="Metal">Metal</option><option value="Modified Bitumen">Modified Bitumen</option><option value="EPDM">EPDM</option><option value="PVC">PVC</option></select></div>
                         </div>
                         {/* Scope & Notes */}
                         {(job.scopeOfWork || job.estimatingNotes) && <div style={{ marginBottom: 20, padding: "12px 14px", borderRadius: 8, background: C.blueBg + "30", border: `1px solid ${C.blue}15` }}>
@@ -963,7 +979,7 @@
         return (
           <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>New Estimate — Shingle Replacement</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Step {step} of 4</p></div>
+              <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>New Estimate{estimateRoofType ? ` — ${estimateRoofType}` : ""}{selectedLead?.constructionType ? ` ${selectedLead.constructionType}` : ""}</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Step {step} of 4</p></div>
               <button onClick={() => setView("kanban")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>← Back to Board</button>
             </div>
             <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
@@ -977,7 +993,7 @@
               <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}` }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Job</h3>
                 <p style={{ fontSize: 12, color: C.gray500, margin: "0 0 16px" }}>Choose a job that's in "Being Estimated" status.</p>
-                <select style={{ ...fs, fontWeight: 600 }} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
+                <select style={{ ...fs, fontWeight: 600 }} value={selectedLeadId} onChange={e => { setSelectedLeadId(e.target.value); const lead = availableJobs.find(l => l.id === e.target.value); if (lead) { const mat = (lead.estimateMaterial || "").toLowerCase(); const autoType = mat.includes("shingle") ? "Shingle" : mat.includes("tile") ? "Tile" : mat.includes("tpo") ? "TPO" : mat.includes("combo") ? "Combo" : ""; setEstimateRoofType(autoType || "Shingle"); } else { setEstimateRoofType(""); } }}>
                   <option value="">— Select a job —</option>
                   {availableJobs.map(l => { const co = (companies || []).find(c => c.id === l.companyId); const pr = (properties || []).find(p => p.id === l.propertyId); const estCount = estimatesForLead(l.id).length; return (<option key={l.id} value={l.id}>{l.jobName || co?.name || l.company || "—"} — {pr?.name || "—"}{l.estimator ? ` (${l.estimator})` : ""}{estCount > 0 ? ` [${estCount} est]` : ""}</option>); })}
                 </select>
@@ -987,10 +1003,10 @@
                     {leadProperty && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>🏠 {leadProperty.name} — {leadProperty.address || ""}</div>}
                     {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || ""}</div>}
                     {selectedLead.estimator && <div style={{ fontSize: 12, color: C.gray600 }}>📐 Estimator: {selectedLead.estimator}</div>}
-                    {/* Auto-populated estimate type from sales roof data */}
+                    {/* Estimate type — auto-populated from sales data, editable */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Estimate Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.constructionType || "—"}</div></div>
-                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Roof Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.estimateMaterial || "—"}</div></div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400, marginBottom: 4 }}>Estimate Type *</div><select value={estimateRoofType} onChange={e => setEstimateRoofType(e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="">— Select —</option><option value="Shingle">Shingle</option><option value="Tile">Tile</option><option value="TPO">TPO</option><option value="Combo">Combo</option></select></div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Construction</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.constructionType || "—"}</div></div>
                       <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Slope</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.roofSlope || "—"}</div></div>
                     </div>
                     {selectedLead.scopeOfWork && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.blue}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Scope of Work</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.scopeOfWork}</div></div>}
@@ -998,7 +1014,7 @@
                   </div>
                 )}
                 <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-                  <button onClick={() => setStep(2)} disabled={!selectedLeadId} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: selectedLeadId ? C.red : C.gray200, color: selectedLeadId ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: selectedLeadId ? "pointer" : "default" }}>Next → Buildings</button>
+                  <button onClick={() => setStep(2)} disabled={!selectedLeadId || !estimateRoofType} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: selectedLeadId && estimateRoofType ? C.red : C.gray200, color: selectedLeadId && estimateRoofType ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: selectedLeadId && estimateRoofType ? "pointer" : "default" }}>Next → Buildings</button>
                 </div>
               </div>
             )}
