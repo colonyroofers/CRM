@@ -1026,6 +1026,7 @@
       const [showProposalGen, setShowProposalGen] = useState(null); // estimate id
       const [proposalSystem, setProposalSystem] = useState("");
       const [proposalSOW, setProposalSOW] = useState("");
+      const [editingEstimateId, setEditingEstimateId] = useState(null); // id of estimate being edited
       const [catalogSystems] = useFirestoreCollection("cr_systems", []);
 
       const handleKanbanDragStart = (e, jobId) => { setDraggedJobId(jobId); e.dataTransfer.effectAllowed = "move"; };
@@ -1093,7 +1094,7 @@
       const estimatingJobs = (salesLeads || []).filter(l => l.stage === "being_estimated");
       const estimatesForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status !== "rejected" && s.status !== "not_selected");
       const approvedForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "approved");
-      const pendingForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status === "pending");
+      const pendingForLead = (leadId) => submissions.filter(s => s.leadId === leadId && (s.status === "pending" || s.status === "draft"));
 
       // Kanban columns use explicit estimatingPhase if set, otherwise computed from data
       const getJobCol = (j) => {
@@ -1113,9 +1114,24 @@
 
       const startEstimate = (leadId) => {
         setSelectedLeadId(leadId);
+        setEditingEstimateId(null);
         setStep(1);
+        setEstimateRoofType("");
         setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]);
         setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
+        setView("new");
+      };
+
+      const editEstimate = (est) => {
+        setSelectedLeadId(est.leadId);
+        setEditingEstimateId(est.id);
+        setEstimateRoofType(est.estimateRoofType || "");
+        setBuildings(est.buildings && est.buildings.length > 0 ? est.buildings : [{ ...EMPTY_BUILDING, id: "b1" }]);
+        setMat(est.materials || { ...DEFAULT_MATERIALS });
+        setLab(est.labor || { ...DEFAULT_LABOR });
+        setEquip(est.equipment || { ...DEFAULT_EQUIPMENT });
+        setFin(est.financials || { ...DEFAULT_FINANCIALS });
+        setStep(1);
         setView("new");
       };
 
@@ -1191,15 +1207,17 @@
       const handleSubmitEstimate = async () => {
         if (!selectedLeadId) { alert("Select a job first"); return; }
         setSaving(true);
-        const lead = availableJobs.find(l => l.id === selectedLeadId);
+        const lead = availableJobs.find(l => l.id === selectedLeadId) || (salesLeads || []).find(l => l.id === selectedLeadId);
         const co = lead ? (companies || []).find(c => c.id === lead.companyId) : null;
         const pr = lead ? (properties || []).find(p => p.id === lead.propertyId) : null;
         const project = { jobName: lead?.jobName || (co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof"), companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas" };
         const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market, estimateRoofType };
+        if (editingEstimateId) { data.id = editingEstimateId; data.updatedBy = user.name; data.updatedAt = new Date().toISOString(); }
         const saved = await saveSubmission(data);
         if (saved) {
-          if (setSalesLeads) { setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`, by: user.name, at: new Date().toISOString() }] } : l)); }
-          await refresh(); setView("kanban"); setStep(1); setSelectedLeadId("");
+          const actionText = editingEstimateId ? `Estimate updated ($${grandTotal.toLocaleString()}) by ${user.name}` : `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`;
+          if (setSalesLeads) { setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: actionText, by: user.name, at: new Date().toISOString() }] } : l)); }
+          await refresh(); setView("kanban"); setStep(1); setSelectedLeadId(""); setEditingEstimateId(null);
           setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]); setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
         }
         setSaving(false);
@@ -1426,8 +1444,9 @@
                           ) : jobEstimates.map(est => (
                             <div key={est.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8 }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                                <div><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{fmt(est.totalPrice || 0)}</span><span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: est.status === "approved" ? C.greenBg : est.status === "awarded" ? C.blueBg : C.yellowBg, color: est.status === "approved" ? C.green : est.status === "awarded" ? C.blue : C.yellow }}>{est.status}</span></div>
+                                <div><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{fmt(est.totalPrice || 0)}</span><span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: est.status === "approved" ? C.greenBg : est.status === "awarded" ? C.blueBg : est.status === "draft" ? C.gray100 : C.yellowBg, color: est.status === "approved" ? C.green : est.status === "awarded" ? C.blue : est.status === "draft" ? C.gray500 : C.yellow }}>{est.status}</span></div>
                                 <div style={{ display: "flex", gap: 4 }}>
+                                  {(est.status === "draft" || est.status === "pending") && <button onClick={() => { setSelectedKanbanJob(null); editEstimate(est); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.navy}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>}
                                   {est.status === "pending" && (role === "estimator" || role === "admin") && <button onClick={() => { const sub = { ...est, status: "pending", submittedForApproval: true, submittedForApprovalAt: new Date().toISOString(), submittedForApprovalBy: user.name }; saveSubmission(sub).then(() => refresh()); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}`, background: C.white, color: C.blue, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Submit for Approval</button>}
                                   {est.status === "pending" && (role === "admin" || role === "lead_estimator") && <button onClick={() => { handleApprove(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.green, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓ Approve</button>}
                                   {est.status === "approved" && <button onClick={() => { handleAward(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.blue, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>🏆 Award</button>}
@@ -1500,7 +1519,7 @@
         return (
           <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>New Estimate{estimateRoofType ? ` — ${estimateRoofType}` : ""}{selectedLead?.constructionType ? ` ${selectedLead.constructionType}` : ""}</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Step {step} of 4</p></div>
+              <div><h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.navy }}>{editingEstimateId ? "Edit Estimate" : "New Estimate"}{estimateRoofType ? ` — ${estimateRoofType}` : ""}{selectedLead?.constructionType ? ` ${selectedLead.constructionType}` : ""}</h2><p style={{ margin: "4px 0 0", fontSize: 13, color: C.gray500 }}>Step {step} of 4</p></div>
               <button onClick={() => setView("kanban")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>← Back to Board</button>
             </div>
             <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
@@ -1681,7 +1700,7 @@
                 </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
                   <button onClick={() => setStep(3)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} Submit for Approval</button>
+                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} {editingEstimateId ? "Update Estimate" : "Submit for Approval"}</button>
                 </div>
               </div>
             )}
