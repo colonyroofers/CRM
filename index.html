@@ -504,6 +504,10 @@
       const [expandedEstimate, setExpandedEstimate] = useState(null);
       const [draggedJobId, setDraggedJobId] = useState(null);
       const [selectedKanbanJob, setSelectedKanbanJob] = useState(null);
+      const [showProposalGen, setShowProposalGen] = useState(null); // estimate id
+      const [proposalSystem, setProposalSystem] = useState("");
+      const [proposalSOW, setProposalSOW] = useState("");
+      const [catalogSystems] = useFirestoreCollection("cr_systems", []);
 
       const handleKanbanDragStart = (e, jobId) => { setDraggedJobId(jobId); e.dataTransfer.effectAllowed = "move"; };
       const handleKanbanDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; };
@@ -895,7 +899,34 @@
                                 </div>
                               </div>
                               <div style={{ fontSize: 11, color: C.gray500 }}>{est.buildings?.length || 0} buildings · by {est.submittedBy || "—"} · {new Date(est.createdAt).toLocaleDateString()}</div>
+                              {est.status === "approved" && <button onClick={() => { setShowProposalGen(est.id); setProposalSOW(""); setProposalSystem(""); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.navy}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>📄 Generate Proposal</button>}
                               {est.submittedForApproval && <div style={{ fontSize: 10, color: C.blue, fontWeight: 600, marginTop: 4 }}>📤 Submitted for approval {est.submittedForApprovalAt ? `on ${new Date(est.submittedForApprovalAt).toLocaleDateString()}` : ""} by {est.submittedForApprovalBy || "—"}</div>}
+                              {/* Proposal Generator */}
+                              {showProposalGen === est.id && (
+                                <div style={{ marginTop: 10, padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.navy}30`, background: C.gray50 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 8 }}>📄 Generate Proposal</div>
+                                  <div style={{ marginBottom: 8 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4 }}>Select Roof System from Catalog</label>
+                                    <select value={proposalSystem} onChange={e => { setProposalSystem(e.target.value); const sys = catalogSystems.find(s => s.id === e.target.value); if (sys?.standardSOW) setProposalSOW(sys.standardSOW); }} style={{ width: "100%", padding: "6px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy }}>
+                                      <option value="">— Select system —</option>
+                                      {catalogSystems.map(sys => <option key={sys.id} value={sys.id}>{sys.name}</option>)}
+                                    </select>
+                                  </div>
+                                  <div style={{ marginBottom: 8 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4 }}>Scope of Work {proposalSystem && "(auto-populated from system)"}</label>
+                                    <textarea value={proposalSOW} onChange={e => setProposalSOW(e.target.value)} style={{ width: "100%", padding: "6px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy, minHeight: 80, resize: "vertical", boxSizing: "border-box" }} placeholder="Scope of work will auto-populate when you select a roof system..." />
+                                  </div>
+                                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                                    <button onClick={() => setShowProposalGen(null)} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                                    <button onClick={() => {
+                                      const sys = catalogSystems.find(s => s.id === proposalSystem);
+                                      const proposal = { id: generateId(), estimateId: est.id, systemName: sys?.name || "Custom", sow: proposalSOW, total: est.totalPrice, createdAt: new Date().toISOString(), createdBy: user.name };
+                                      const updatedEst = { ...est, proposal };
+                                      saveSubmission(updatedEst).then(() => { refresh(); setShowProposalGen(null); alert("Proposal generated and attached to estimate."); });
+                                    }} disabled={!proposalSOW.trim()} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: proposalSOW.trim() ? C.green : C.gray300, color: proposalSOW.trim() ? C.white : C.gray400, fontSize: 11, fontWeight: 600, cursor: proposalSOW.trim() ? "pointer" : "default" }}>Generate Proposal</button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -956,6 +987,12 @@
                     {leadProperty && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>🏠 {leadProperty.name} — {leadProperty.address || ""}</div>}
                     {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || ""}</div>}
                     {selectedLead.estimator && <div style={{ fontSize: 12, color: C.gray600 }}>📐 Estimator: {selectedLead.estimator}</div>}
+                    {/* Auto-populated estimate type from sales roof data */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Estimate Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.constructionType || "—"}</div></div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Roof Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.estimateMaterial || "—"}</div></div>
+                      <div style={{ padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.gray400 }}>Slope</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{selectedLead.roofSlope || "—"}</div></div>
+                    </div>
                     {selectedLead.scopeOfWork && <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.blue}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Scope of Work</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.scopeOfWork}</div></div>}
                     {selectedLead.estimatingNotes && <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.yellow}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Notes from Sales</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.estimatingNotes}</div></div>}
                   </div>
@@ -3894,7 +3931,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [form, setForm] = useState({ name: "", manufacturer: "", sku: "", category: "Shingles", unit: "EACH", price: "", notes: "" });
       const [vendorForm, setVendorForm] = useState({ name: "", type: "Distributor", contact: "", phone: "", email: "", address: "", notes: "" });
       const [assemblyForm, setAssemblyForm] = useState({ name: "", description: "", productIds: [] });
-      const [systemForm, setSystemForm] = useState({ name: "", description: "", assemblyIds: [], productIds: [] });
+      const [systemForm, setSystemForm] = useState({ name: "", description: "", assemblyIds: [], productIds: [], standardSOW: "" });
       const [expandedCatalogItem, setExpandedCatalogItem] = useState(null);
 
       const fs = { width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none" };
@@ -3946,7 +3983,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleAddSystem = () => {
         if (!systemForm.name) return;
         setSystems(prev => [...prev, { ...systemForm, id: generateId(), createdAt: new Date().toISOString() }]);
-        setSystemForm({ name: "", description: "", assemblyIds: [], productIds: [] });
+        setSystemForm({ name: "", description: "", assemblyIds: [], productIds: [], standardSOW: "" });
         setShowAdd(false);
       };
       const handleDeleteSystem = (id) => { setSystems(prev => prev.filter(s => s.id !== id)); };
@@ -4269,6 +4306,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12, marginBottom: 12 }}>
                   <div><label style={ls}>System Name</label><input style={fs} value={systemForm.name} onChange={e => setSystemForm(f => ({ ...f, name: e.target.value }))} placeholder="Complete TPO System" /></div>
                   <div><label style={ls}>Description</label><input style={fs} value={systemForm.description} onChange={e => setSystemForm(f => ({ ...f, description: e.target.value }))} /></div>
+                  <div><label style={ls}>Standard Scope of Work (used in proposals)</label><textarea style={{ ...fs, minHeight: 80, resize: "vertical" }} value={systemForm.standardSOW} onChange={e => setSystemForm(f => ({ ...f, standardSOW: e.target.value }))} placeholder="Enter the standard scope of work for this roofing system..." /></div>
                 </div>
                 {assemblies.length > 0 && <div style={{ marginBottom: 12 }}>
                   <label style={ls}>Include Assemblies</label>
