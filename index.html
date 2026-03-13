@@ -331,25 +331,27 @@
     }
 
     // ─── FULL INLINE ESTIMATING MODULE ───────────────────────────
-    function EstimatingModule({ user, role }) {
+    function EstimatingModule({ user, role, entities, salesLeads, setSalesLeads }) {
+      const { companies, properties, contacts } = entities || {};
       const [mode, setMode] = useState("submissions"); // "submissions" | "new"
       const [submissions, setSubmissions] = useState([]);
       const [loading, setLoading] = useState(true);
       const [selectedSub, setSelectedSub] = useState(null);
 
       // New estimate state
-      const [project, setProject] = useState({ jobName: "", companyName: "", clientName: "", address: "", cityStateZip: "", market: "atlanta" });
+      const [selectedLeadId, setSelectedLeadId] = useState("");
       const [buildings, setBuildings] = useState([{ ...EMPTY_BUILDING, id: "b1" }]);
       const [materials, setMat] = useState({ ...DEFAULT_MATERIALS });
       const [labor, setLab] = useState({ ...DEFAULT_LABOR });
       const [equipment, setEquip] = useState({ ...DEFAULT_EQUIPMENT });
       const [financials, setFin] = useState({ ...DEFAULT_FINANCIALS });
-      const [step, setStep] = useState(1); // 1=project, 2=buildings, 3=pricing, 4=review
+      const [step, setStep] = useState(1); // 1=select job, 2=buildings, 3=pricing, 4=review
       const [saving, setSaving] = useState(false);
       const [showEmail, setShowEmail] = useState(null);
       const [roofRProcessing, setRoofRProcessing] = useState(false);
       const [roofRError, setRoofRError] = useState(null);
       const roofRInputRef = useRef(null);
+      const [showAwardPicker, setShowAwardPicker] = useState(null); // leadId for multi-estimate pick
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
       const refresh = async () => { setLoading(true); const s = await loadAllSubmissions(); setSubmissions(s); setLoading(false); };
@@ -358,37 +360,107 @@
       const [filter, setFilter] = useState("all");
       const filtered = filter === "all" ? submissions : submissions.filter(s => s.status === filter);
 
+      // Available jobs = sales leads not yet awarded
+      const availableJobs = (salesLeads || []).filter(l => l.stage !== "closed_lost");
+      const selectedLead = availableJobs.find(l => l.id === selectedLeadId);
+      const leadCompany = selectedLead ? (companies || []).find(c => c.id === selectedLead.companyId) : null;
+      const leadProperty = selectedLead ? (properties || []).find(p => p.id === selectedLead.propertyId) : null;
+      const leadContact = selectedLead ? (contacts || []).find(c => c.id === selectedLead.contactId) : null;
+
       // Calculations (live)
       const results = calcAllBuildings(buildings, materials, labor, equipment, financials);
       const grandTotal = results.reduce((s, r) => s + r.totalPrice, 0);
       const totalSq = buildings.reduce((s, b) => s + b.totalArea, 0);
 
+      // Count estimates per lead
+      const estimatesForLead = (leadId) => submissions.filter(s => s.leadId === leadId && s.status !== "rejected");
+
       const handleAward = async (sub) => {
-        if (!confirm(`Award "${sub.project?.jobName}"?`)) return;
+        // Check if this lead has multiple approved estimates
+        const leadEstimates = submissions.filter(s => s.leadId === sub.leadId && s.status === "approved");
+        if (leadEstimates.length > 1) {
+          setShowAwardPicker(sub.leadId);
+          return;
+        }
+        await doAward(sub);
+      };
+
+      const doAward = async (sub) => {
+        if (!confirm(`Award "${sub.project?.jobName || sub.leadName}" and move to Production?`)) return;
+        // Update submission status
         const updated = { ...sub, status: "awarded", awardedAt: new Date().toISOString(), awardedBy: user.name };
         await saveSubmission(updated);
-        const marketKey = sub.project?.market || "atlanta";
-        const marketCode = marketKey === "atlanta" ? "ATL" : marketKey === "tampa" ? "TPA" : "DFW";
+
+        // Mark other estimates for this lead as not-selected
+        for (const other of submissions.filter(s => s.leadId === sub.leadId && s.id !== sub.id && s.status === "approved")) {
+          await saveSubmission({ ...other, status: "not_selected" });
+        }
+
+        // Build production project with budget from estimate
         const totalPrice = sub.totalPrice || sub.results?.reduce((s, r) => s + r.totalPrice, 0) || 0;
         const totalMat = sub.results?.reduce((s, r) => s + r.materialCost, 0) || 0;
         const totalLab = sub.results?.reduce((s, r) => s + r.laborCost, 0) || 0;
-        const estimatedCost = totalMat + totalLab + (sub.results?.reduce((s, r) => s + r.materialTax, 0) || 0);
+        const totalTax = sub.results?.reduce((s, r) => s + r.materialTax, 0) || 0;
+        const estimatedCost = totalMat + totalLab + totalTax;
         const margin = totalPrice > 0 ? Math.round(((totalPrice - estimatedCost) / totalPrice) * 100) : 0;
+
         const newProject = {
-          id: generateId(), name: sub.project?.jobName || "Untitled", client: sub.project?.companyName || "", address: (sub.project?.address || "") + " " + (sub.project?.cityStateZip || ""), market: marketCode, status: "Pre-Construction", roofType: "Asphalt Shingles", sqft: sub.buildings?.reduce((s, b) => s + (b.totalArea || 0), 0) || 0, contractValue: totalPrice, estimatedCost, estimatedMargin: margin, currentCost: 0, currentMargin: margin, assignedSuper: "", buildings: sub.buildings?.length || 1, progress: 0, createdAt: new Date().toISOString().split("T")[0], documents: {}, estimateId: sub.id,
-          budgetLineItems: [{ id: generateId(), description: "Materials", amount: totalMat, category: "Materials" }, { id: generateId(), description: "Labor & Equipment", amount: totalLab, category: "Labor" }, { id: generateId(), description: "Material Tax", amount: sub.results?.reduce((s, r) => s + r.materialTax, 0) || 0, category: "Other" }],
+          id: generateId(), name: sub.project?.jobName || sub.leadName || "Untitled",
+          client: sub.project?.companyName || leadCompany?.name || "",
+          address: leadProperty?.address || sub.project?.address || "",
+          market: sub.project?.market === "atlanta" ? "ATL" : sub.project?.market === "tampa" ? "TPA" : sub.project?.market === "dallas" ? "DFW" : sub.market || "ATL",
+          status: "Pre-Construction", roofType: "Asphalt Shingles",
+          sqft: sub.buildings?.reduce((s, b) => s + (b.totalArea || 0), 0) || 0,
+          contractValue: totalPrice, estimatedCost, estimatedMargin: margin, currentCost: 0, currentMargin: margin,
+          assignedSuper: "", buildings: sub.buildings?.length || 1, progress: 0,
+          createdAt: new Date().toISOString().split("T")[0], documents: {},
+          estimateId: sub.id, leadId: sub.leadId,
+          companyId: sub.companyId, propertyId: sub.propertyId, contactId: sub.contactId,
+          budgetLineItems: [
+            { id: generateId(), description: "Materials", amount: totalMat, category: "Materials" },
+            { id: generateId(), description: "Labor & Equipment", amount: totalLab, category: "Labor" },
+            { id: generateId(), description: "Material Tax", amount: totalTax, category: "Other" },
+            ...(sub.results || []).map((r, i) => ({ id: generateId(), description: `Bldg ${i + 1} — Margin`, amount: r.marginAmt || 0, category: "Margin" })),
+          ],
         };
         try { const existing = JSON.parse(localStorage.getItem("cr_production_projects") || "[]"); existing.unshift(newProject); localStorage.setItem("cr_production_projects", JSON.stringify(existing)); if (firestoreDb) await firestoreDb.collection("cr_production_projects").doc("data").set({ items: existing, updatedAt: new Date().toISOString() }); } catch (e) {}
+
+        // Move the sales lead to closed_won
+        if (sub.leadId && setSalesLeads) {
+          setSalesLeads(prev => prev.map(l => l.id === sub.leadId ? { ...l, stage: "closed_won", estimatedValue: totalPrice, activities: [...(l.activities || []), { type: "awarded", text: `Awarded — estimate ${sub.id} selected, moved to Production`, by: user.name, at: new Date().toISOString() }] } : l));
+        }
+
         await refresh();
-        alert(`"${newProject.name}" awarded and added to Production!`);
+        setShowAwardPicker(null);
+        alert(`"${newProject.name}" awarded and added to Production with budget!`);
       };
 
       const handleSubmitEstimate = async () => {
-        if (!project.jobName.trim()) { alert("Enter a job name"); return; }
+        if (!selectedLeadId) { alert("Select a job first"); return; }
         setSaving(true);
-        const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name };
+        const lead = availableJobs.find(l => l.id === selectedLeadId);
+        const co = lead ? (companies || []).find(c => c.id === lead.companyId) : null;
+        const pr = lead ? (properties || []).find(p => p.id === lead.propertyId) : null;
+        const project = {
+          jobName: co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof",
+          companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas",
+        };
+        const data = {
+          project, buildings, materials, labor, equipment, financials, results,
+          totalPrice: grandTotal, status: "pending", submittedBy: user.name,
+          leadId: selectedLeadId, leadName: project.jobName,
+          companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId,
+          market: lead?.market,
+        };
         const saved = await saveSubmission(data);
-        if (saved) { await refresh(); setMode("submissions"); setStep(1); setProject({ jobName: "", companyName: "", clientName: "", address: "", cityStateZip: "", market: "atlanta" }); setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]); setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS }); }
+        if (saved) {
+          // Log activity on the lead
+          if (setSalesLeads) {
+            setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`, by: user.name, at: new Date().toISOString() }] } : l));
+          }
+          await refresh(); setMode("submissions"); setStep(1); setSelectedLeadId("");
+          setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]); setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
+        }
         setSaving(false);
       };
 
@@ -524,29 +596,39 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
 
             {/* Step indicator */}
             <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
-              {["Project Info", "Buildings", "Pricing", "Review"].map((s, i) => (
+              {["Select Job", "Buildings", "Pricing", "Review"].map((s, i) => (
                 <button key={i} onClick={() => setStep(i + 1)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: step === i + 1 ? C.navy : step > i + 1 ? C.green + "20" : C.gray100, color: step === i + 1 ? C.white : step > i + 1 ? C.green : C.gray500, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{i + 1}. {s}</button>
               ))}
             </div>
 
-            {/* STEP 1: Project Info */}
+            {/* STEP 1: Select Job */}
             {step === 1 && (
               <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}` }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Project Information</h3>
-                <div style={{ display: "grid", gap: 14 }}>
-                  <div><label style={ls}>Job Name *</label><input style={fs} value={project.jobName} onChange={e => setProject(p => ({ ...p, jobName: e.target.value }))} placeholder="e.g. Preserve at Tampa Palms — Re-Roof" /></div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div><label style={ls}>Company / Owner</label><input style={fs} value={project.companyName} onChange={e => setProject(p => ({ ...p, companyName: e.target.value }))} /></div>
-                    <div><label style={ls}>Client Contact</label><input style={fs} value={project.clientName} onChange={e => setProject(p => ({ ...p, clientName: e.target.value }))} /></div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-                    <div><label style={ls}>Address</label><input style={fs} value={project.address} onChange={e => setProject(p => ({ ...p, address: e.target.value }))} /></div>
-                    <div><label style={ls}>City, State, ZIP</label><input style={fs} value={project.cityStateZip} onChange={e => setProject(p => ({ ...p, cityStateZip: e.target.value }))} /></div>
-                  </div>
-                  <div><label style={ls}>Market</label><select style={fs} value={project.market} onChange={e => setProject(p => ({ ...p, market: e.target.value }))}><option value="atlanta">Atlanta</option><option value="tampa">Tampa</option><option value="dallas">Dallas</option></select></div>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Job</h3>
+                <p style={{ fontSize: 12, color: C.gray500, margin: "0 0 16px" }}>Choose a project from Project Sales to create an estimate for. Jobs must be created in Sales first.</p>
+                <div>
+                  <label style={ls}>Job *</label>
+                  <select style={{ ...fs, fontWeight: 600 }} value={selectedLeadId} onChange={e => setSelectedLeadId(e.target.value)}>
+                    <option value="">— Select a job —</option>
+                    {availableJobs.map(l => { const co = (companies || []).find(c => c.id === l.companyId); const pr = (properties || []).find(p => p.id === l.propertyId); const estCount = estimatesForLead(l.id).length; return (<option key={l.id} value={l.id}>{co?.name || l.company || "—"} — {pr?.name || "—"} ({SALES_STAGES.find(s => s.id === l.stage)?.label}){estCount > 0 ? ` [${estCount} est]` : ""}</option>); })}
+                  </select>
+                  {availableJobs.length === 0 && <p style={{ fontSize: 12, color: C.red, margin: "8px 0 0" }}>No jobs found. Create projects in the Sales module first.</p>}
                 </div>
+                {/* Selected job summary */}
+                {selectedLead && (
+                  <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 10, background: C.greenBg + "40", border: `1px solid ${C.green}40` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{leadCompany?.name || selectedLead.company || "—"}</span>
+                      <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.navy + "18", color: C.navy }}>{SALES_STAGES.find(s => s.id === selectedLead.stage)?.label}</span>
+                    </div>
+                    {leadProperty && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>🏠 {leadProperty.name} — {leadProperty.address || ""}</div>}
+                    {leadContact && <div style={{ fontSize: 12, color: C.gray600, marginBottom: 2 }}>👤 {leadContact.name} — {leadContact.email || leadContact.phone || ""}</div>}
+                    {selectedLead.market && <div style={{ fontSize: 12, color: C.gray600 }}>📍 {MARKET_LABELS[selectedLead.market] || selectedLead.market}</div>}
+                    {estimatesForLead(selectedLead.id).length > 0 && <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 11, fontWeight: 600 }}>This job already has {estimatesForLead(selectedLead.id).length} estimate(s)</div>}
+                  </div>
+                )}
                 <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-                  <button onClick={() => setStep(2)} disabled={!project.jobName.trim()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: project.jobName.trim() ? C.red : C.gray200, color: project.jobName.trim() ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: project.jobName.trim() ? "pointer" : "default" }}>Next → Buildings</button>
+                  <button onClick={() => setStep(2)} disabled={!selectedLeadId} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: selectedLeadId ? C.red : C.gray200, color: selectedLeadId ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: selectedLeadId ? "pointer" : "default" }}>Next → Buildings</button>
                 </div>
               </div>
             )}
@@ -681,8 +763,9 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
             {step === 4 && (
               <div>
                 <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}`, marginBottom: 16 }}>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{project.jobName}</h3>
-                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>{project.companyName} · {project.address} {project.cityStateZip}</p>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{leadCompany?.name || "—"} — {leadProperty?.name || "—"}</h3>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 4px" }}>{leadProperty?.address || ""} · {leadContact?.name || ""}</p>
+                  <p style={{ fontSize: 11, color: C.gray400, margin: "0 0 16px" }}>Linked to job: {selectedLead?.stage ? SALES_STAGES.find(s => s.id === selectedLead.stage)?.label : "—"}</p>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Buildings</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{buildings.length}</p></div>
                     <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Total Sq Ft</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{totalSq.toLocaleString()}</p></div>
@@ -759,7 +842,7 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
                   <div key={sub.id} style={{ background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 10, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16 }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 700, fontSize: 15, color: C.navy }}>{sub.project?.jobName || "Untitled"}</span>
+                        <span style={{ fontWeight: 700, fontSize: 15, color: C.navy }}>{sub.leadName || sub.project?.jobName || "Untitled"}</span>
                         <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, textTransform: "uppercase", background: sc.bg, color: sc.color }}>{sub.status}</span>
                       </div>
                       <div style={{ fontSize: 12, color: C.gray500, display: "flex", gap: 16 }}>
@@ -790,10 +873,43 @@ Extract ALL buildings from the report. Use 0 for any measurement not found. For 
           {showEmail && (
             <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }} onClick={() => setShowEmail(null)}>
               <div style={{ width: 480 }} onClick={e => e.stopPropagation()}>
-                <EmailCompose defaultSubject={`Colony Roofers — Estimate for ${showEmail.project?.jobName}`} defaultBody={`Hey ${(showEmail.project?.clientName || "").split(" ")[0] || "there"},\n\nHope all is well. Attached is our estimate for ${showEmail.project?.jobName} — total: ${fmt(showEmail.totalPrice || 0)}.\n\nLet me know if you have any questions.\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`} onCancel={() => setShowEmail(null)} onSent={() => setShowEmail(null)} />
+                <EmailCompose defaultSubject={`Colony Roofers — Estimate for ${showEmail.leadName || showEmail.project?.jobName}`} defaultBody={`Hey,\n\nHope all is well. Attached is our estimate — total: ${fmt(showEmail.totalPrice || 0)}.\n\nLet me know if you have any questions.\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`} onCancel={() => setShowEmail(null)} onSent={() => setShowEmail(null)} />
               </div>
             </div>
           )}
+          {/* Multi-estimate award picker */}
+          {showAwardPicker && (() => {
+            const leadEstimates = submissions.filter(s => s.leadId === showAwardPicker && s.status === "approved");
+            const lead = (salesLeads || []).find(l => l.id === showAwardPicker);
+            return (
+              <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setShowAwardPicker(null)}>
+                <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+                  <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}` }}>
+                    <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Select Winning Estimate</h2>
+                    <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>This job has {leadEstimates.length} approved estimates. Choose which one becomes the production budget.</p>
+                  </div>
+                  <div style={{ padding: "16px 28px 28px" }}>
+                    {leadEstimates.map(est => (
+                      <div key={est.id} style={{ padding: "16px", borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 10, cursor: "pointer", transition: "all 0.15s" }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = C.green; e.currentTarget.style.background = C.greenBg + "40"; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = C.gray200; e.currentTarget.style.background = "transparent"; }}
+                        onClick={() => doAward(est)}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{est.leadName || est.project?.jobName}</span>
+                          <span style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{fmt(est.totalPrice || 0)}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: C.gray500 }}>
+                          {est.buildings?.length || 0} bldgs · {Math.ceil((est.buildings?.reduce((s, b) => s + (b.totalArea || 0), 0) || 0) / 100)} sq · by {est.submittedBy} · {new Date(est.createdAt).toLocaleDateString()}
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 11, color: C.green, fontWeight: 600 }}>Click to award this estimate →</div>
+                      </div>
+                    ))}
+                    <button onClick={() => setShowAwardPicker(null)} style={{ marginTop: 8, padding: "10px 0", width: "100%", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -3760,43 +3876,73 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
     function CreateLeadModal({ entities, onClose, onCreate, prefill }) {
       const { companies, properties, contacts, setCompanies } = entities;
-      const [form, setForm] = useState({ companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", company: "", contactName: "", contactEmail: "", contactPhone: "", market: "ATL", source: "ZoomInfo", propertyType: "Apartment Complex", estimatedValue: 0, sqft: 0, address: "", notes: "" });
+      const [form, setForm] = useState({ companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", market: "ATL", source: "ZoomInfo", estimatedValue: 0, notes: "" });
+      const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
-      const filteredProps = form.companyId ? properties.filter(p => p.companyId === form.companyId) : properties;
-      const filteredContacts = form.companyId ? contacts.filter(c => c.companyId === form.companyId) : contacts;
+      const lsReq = { ...ls, color: C.navy };
+
+      // Auto-populate company when property or contact is selected
+      useEffect(() => {
+        if (!form.companyId) {
+          if (form.propertyId) { const p = properties.find(x => x.id === form.propertyId); if (p?.companyId) setForm(f => ({ ...f, companyId: p.companyId })); }
+          else if (form.contactId) { const c = contacts.find(x => x.id === form.contactId); if (c?.companyId) setForm(f => ({ ...f, companyId: c.companyId })); }
+        }
+      }, [form.propertyId, form.contactId]);
+
+      const filteredProps = form.companyId ? properties.filter(p => p.companyId === form.companyId || !p.companyId) : properties;
+      const filteredContacts = form.companyId ? contacts.filter(c => c.companyId === form.companyId || !c.companyId) : contacts;
+      const selectedProp = properties.find(p => p.id === form.propertyId);
+      const selectedContact = contacts.find(c => c.id === form.contactId);
+      const selectedCompany = companies.find(c => c.id === form.companyId);
+
+      const validate = () => {
+        if (!form.propertyId) return "A property is required for every job.";
+        if (!form.contactId) return "A contact is required for every job.";
+        return "";
+      };
+
+      const handleSubmit = () => {
+        const err = validate();
+        if (err) { setValidationError(err); return; }
+        setValidationError("");
+        // Auto-set company name for display
+        const leadData = { ...form, company: selectedCompany?.name || "" };
+        onCreate(leadData);
+      };
+
       return (
         <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
           <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>New Lead</h2>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>New Project</h2>
               <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400 }}>{I.x}</button>
             </div>
             <div style={{ padding: "20px 28px 28px", display: "grid", gap: 14 }}>
               <div style={{ padding: "14px 16px", borderRadius: 10, background: C.gray50, border: `1px solid ${C.gray200}` }}>
-                <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>Link to Directory</h4>
+                <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>Link to Directory (required)</h4>
                 <div style={{ display: "grid", gap: 10 }}>
-                  <div><label style={ls}>Company</label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value }))}><option value="">— Select or type below —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div><label style={ls}>Property</label><select style={fs} value={form.propertyId} onChange={e => setForm(f => ({ ...f, propertyId: e.target.value }))}><option value="">— Select —</option>{filteredProps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-                    <div><label style={ls}>Contact</label><select style={fs} value={form.contactId} onChange={e => setForm(f => ({ ...f, contactId: e.target.value }))}><option value="">— Select —</option>{filteredContacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-                  </div>
+                  <div><label style={ls}>Company <span style={{ fontWeight: 400, color: C.gray400 }}>(auto-fills from property/contact)</span></label><select style={fs} value={form.companyId} onChange={e => setForm(f => ({ ...f, companyId: e.target.value, propertyId: "", contactId: "" }))}><option value="">— Select —</option>{companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                  <div><label style={lsReq}>Property *</label><select style={{ ...fs, borderColor: !form.propertyId ? C.red + "40" : C.gray300 }} value={form.propertyId} onChange={e => { setForm(f => ({ ...f, propertyId: e.target.value })); }}><option value="">— Select property —</option>{filteredProps.map(p => <option key={p.id} value={p.id}>{p.name} {p.address ? `(${p.address})` : ""}</option>)}{filteredProps.length === 0 && <option disabled>No properties — create one in Directory</option>}</select></div>
+                  <div><label style={lsReq}>Contact *</label><select style={{ ...fs, borderColor: !form.contactId ? C.red + "40" : C.gray300 }} value={form.contactId} onChange={e => { setForm(f => ({ ...f, contactId: e.target.value })); }}><option value="">— Select contact —</option>{filteredContacts.map(c => <option key={c.id} value={c.id}>{c.name} {c.email ? `(${c.email})` : ""}</option>)}{filteredContacts.length === 0 && <option disabled>No contacts — create one in Directory</option>}</select></div>
                 </div>
               </div>
-              {!form.companyId && <div><label style={ls}>Company (manual)</label><input style={fs} value={form.company} onChange={e => setForm(f => ({ ...f, company: e.target.value }))} placeholder="Or type company name" /></div>}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div><label style={ls}>Contact Name</label><input style={fs} value={form.contactName} onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))} /></div>
-                <div><label style={ls}>Email</label><input style={fs} type="email" value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} /></div>
-              </div>
+              {/* Summary of selected entities */}
+              {(selectedProp || selectedContact || selectedCompany) && <div style={{ padding: "10px 14px", borderRadius: 8, background: C.greenBg + "40", border: `1px solid ${C.green}30`, fontSize: 12 }}>
+                {selectedCompany && <div style={{ marginBottom: 2 }}>🏢 <strong>{selectedCompany.name}</strong></div>}
+                {selectedProp && <div style={{ marginBottom: 2 }}>🏠 {selectedProp.name} — {selectedProp.address || "No address"}</div>}
+                {selectedContact && <div>👤 {selectedContact.name} — {selectedContact.email || selectedContact.phone || ""}</div>}
+              </div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 <div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div>
                 <div><label style={ls}>Source</label><select style={fs} value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}>{LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                 <div><label style={ls}>Est. Value ($)</label><input style={fs} type="number" value={form.estimatedValue} onChange={e => setForm(f => ({ ...f, estimatedValue: Number(e.target.value) }))} /></div>
               </div>
               <div><label style={ls}>Notes</label><textarea style={{ ...fs, minHeight: 60, resize: "vertical" }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></div>
+              {validationError && <div style={{ padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, fontWeight: 600 }}>{validationError}</div>}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button onClick={onClose} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                <button onClick={() => { if (form.companyId || form.company.trim()) onCreate(form); }} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Create Lead</button>
+                <button onClick={handleSubmit} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Create Project</button>
               </div>
             </div>
           </div>
@@ -5237,7 +5383,7 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
               )}
             </div>
           </div>
-          {currentModule === "estimating" && <EstimatingModule user={user} role={role} />}
+          {currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
           {currentModule === "production" && <ProductionModule user={user} role={role} />}
           {currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} />}
           {currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} />}
