@@ -1144,7 +1144,7 @@
                 </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
                   <button onClick={() => setStep(3)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
-                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} Submit Estimate</button>
+                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} Submit for Approval</button>
                 </div>
               </div>
             )}
@@ -7310,6 +7310,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       const [showMenu, setShowMenu] = useState(false);
       const [settingsView, setSettingsView] = useState(null);
       const [sidebarOpen, setSidebarOpen] = useState(true);
+      const [showFloatingEmail, setShowFloatingEmail] = useState(false);
       const menuRef = useRef(null);
 
       // Close menu on outside click
@@ -7412,6 +7413,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       }
 
       const modules = [
+        { key: "daily_digest", label: "Daily Digest", icon: "📅" },
         { key: "directory", label: "Directory", icon: "📇" },
         { key: "inspections", label: "Inspections", icon: "🔍" },
         { key: "sales", label: "Project Sales", icon: "💼" },
@@ -7647,6 +7649,22 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
 
             <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} currentModule={currentModule} />
           </div>
+
+          {/* Floating Email Button */}
+          <button onClick={() => setShowFloatingEmail(true)} style={{ position: "fixed", bottom: 24, right: 24, width: 56, height: 56, borderRadius: "50%", border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 24, cursor: "pointer", boxShadow: "0 6px 20px rgba(0,0,0,0.25)", zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform 0.15s" }} onMouseEnter={e => e.currentTarget.style.transform = "scale(1.1)"} onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"} title="Compose Email">✉️</button>
+
+          {/* Floating Email Compose Modal */}
+          {showFloatingEmail && <div style={{ position: "fixed", inset: 0, zIndex: 2500, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setShowFloatingEmail(false)}>
+            <div style={{ width: 520 }} onClick={e => e.stopPropagation()}>
+              <EmailCompose
+                defaultSubject=""
+                defaultBody={`\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`}
+                contacts={contactsData}
+                onCancel={() => setShowFloatingEmail(false)}
+                onSent={() => setShowFloatingEmail(false)}
+              />
+            </div>
+          </div>}
         </div>
       );
     }
