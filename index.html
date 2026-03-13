@@ -8693,7 +8693,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const formatCurrency = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-      const addInvoiceItem = () => setInvoiceForm(f => ({ ...f, items: [...f.items, { description: "", quantity: 1, unitPrice: 0 }] }));
+      const addInvoiceItem = () => setInvoiceForm(f => ({ ...f, items: [...f.items, { id: generateId(), description: "", quantity: 1, unitPrice: 0 }] }));
       const updateInvoiceItem = (idx, field, val) => setInvoiceForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, [field]: val } : it) }));
       const removeInvoiceItem = (idx) => setInvoiceForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
 
@@ -8768,10 +8768,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
                       <button onClick={addInvoiceItem} style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.navy }}>+ Add Line</button>
                     </div>
                     {invoiceForm.items.map((it, idx) => (
-                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr auto", gap: 8, marginBottom: 6 }}>
+                      <div key={it.id || ('inv_' + idx)} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr auto", gap: 8, marginBottom: 6 }}>
                         <input style={fs} placeholder="Description" value={it.description} onChange={e => updateInvoiceItem(idx, "description", e.target.value)} />
-                        <input style={{ ...fs, textAlign: "right" }} type="number" placeholder="Qty" value={it.quantity} onChange={e => updateInvoiceItem(idx, "quantity", e.target.value)} />
-                        <input style={{ ...fs, textAlign: "right" }} type="number" placeholder="Price" value={it.unitPrice} onChange={e => updateInvoiceItem(idx, "unitPrice", e.target.value)} />
+                        <input style={{ ...fs, textAlign: "right" }} type="number" min="0" placeholder="Qty" value={it.quantity} onChange={e => updateInvoiceItem(idx, "quantity", e.target.value)} />
+                        <input style={{ ...fs, textAlign: "right" }} type="number" min="0" placeholder="Price" value={it.unitPrice} onChange={e => updateInvoiceItem(idx, "unitPrice", e.target.value)} />
                         <button onClick={() => removeInvoiceItem(idx)} style={{ background: "none", border: "none", color: C.gray300, cursor: "pointer", fontSize: 18, padding: "0 4px" }}>×</button>
                       </div>
                     ))}
