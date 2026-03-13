@@ -502,6 +502,7 @@
       const [trackerSort, setTrackerSort] = useState("date");
       const [expandedEstimate, setExpandedEstimate] = useState(null);
       const [draggedJobId, setDraggedJobId] = useState(null);
+      const [selectedKanbanJob, setSelectedKanbanJob] = useState(null);
 
       const handleKanbanDragStart = (e, jobId) => { setDraggedJobId(jobId); e.dataTransfer.effectAllowed = "move"; };
       const handleKanbanDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; };
@@ -758,7 +759,7 @@
                           const ests = estimatesForLead(job.id);
                           const approved = approvedForLead(job.id);
                           return (
-                            <div key={job.id} draggable onDragStart={e => handleKanbanDragStart(e, job.id)} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${draggedJobId === job.id ? C.blue : C.gray200}`, background: draggedJobId === job.id ? C.blueBg : C.white, cursor: "grab", opacity: draggedJobId === job.id ? 0.6 : 1 }}>
+                            <div key={job.id} draggable onDragStart={e => handleKanbanDragStart(e, job.id)} onClick={() => setSelectedKanbanJob(job)} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${draggedJobId === job.id ? C.blue : C.gray200}`, background: draggedJobId === job.id ? C.blueBg : C.white, cursor: "grab", opacity: draggedJobId === job.id ? 0.6 : 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 2 }}>{job.jobName || co?.name || job.company || "—"}</div>
                               {co && job.jobName && <div style={{ fontSize: 11, color: C.gray500, marginBottom: 2 }}>🏢 {co.name}</div>}
                               <div style={{ fontSize: 11, color: C.gray500, marginBottom: 6 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
@@ -806,6 +807,80 @@
                   ))}
                 </div>
               )}
+
+              {/* Estimate Detail Modal */}
+              {selectedKanbanJob && (() => {
+                const job = selectedKanbanJob;
+                const co = (companies || []).find(c => c.id === job.companyId);
+                const pr = (properties || []).find(p => p.id === job.propertyId);
+                const ct = (contacts || []).find(c => c.id === job.contactId);
+                const jobEstimates = estimatesForLead(job.id);
+                const jobApproved = approvedForLead(job.id);
+                const jobPending = pendingForLead(job.id);
+                return (
+                  <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setSelectedKanbanJob(null)}>
+                    <div style={{ background: C.white, borderRadius: 16, width: 640, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+                      <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{job.jobName || co?.name || "—"}</h2>
+                          <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</p>
+                        </div>
+                        <button onClick={() => setSelectedKanbanJob(null)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 18 }}>✕</button>
+                      </div>
+                      <div style={{ padding: "20px 28px" }}>
+                        {/* Job details */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Company</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{co?.name || "—"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Estimator</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.estimator || "Unassigned"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Bid Due</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.bidDueDate ? new Date(job.bidDueDate + "T12:00:00").toLocaleDateString() : "No date"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.constructionType || "—"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Roof Slope</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.roofSlope || "—"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Material</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.estimateMaterial || "—"}</div></div>
+                        </div>
+                        {/* Scope & Notes */}
+                        {(job.scopeOfWork || job.estimatingNotes) && <div style={{ marginBottom: 20, padding: "12px 14px", borderRadius: 8, background: C.blueBg + "30", border: `1px solid ${C.blue}15` }}>
+                          {job.scopeOfWork && <div style={{ fontSize: 12, color: C.navy, marginBottom: job.estimatingNotes ? 6 : 0 }}><span style={{ fontWeight: 700 }}>Scope:</span> {job.scopeOfWork}</div>}
+                          {job.estimatingNotes && <div style={{ fontSize: 12, color: C.gray600 }}><span style={{ fontWeight: 700 }}>Notes:</span> {job.estimatingNotes}</div>}
+                        </div>}
+                        {/* Contact */}
+                        {ct && <div style={{ marginBottom: 20, padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Primary Contact</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{ct.firstName} {ct.lastName}</div>{ct.email && <div style={{ fontSize: 11, color: C.gray500 }}>{ct.email}</div>}{ct.mobilePhone && <div style={{ fontSize: 11, color: C.gray500 }}>{ct.mobilePhone}</div>}</div>}
+                        {/* Estimates list */}
+                        <div style={{ marginBottom: 16 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Estimates ({jobEstimates.length})</span>
+                            <button onClick={() => { setSelectedKanbanJob(null); startEstimate(job.id); }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: C.red, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{jobEstimates.length > 0 ? "+ Add Estimate" : "Create Estimate"}</button>
+                          </div>
+                          {jobEstimates.length === 0 ? (
+                            <div style={{ padding: 20, textAlign: "center", color: C.gray400, fontSize: 12, background: C.gray50, borderRadius: 8 }}>No estimates yet</div>
+                          ) : jobEstimates.map(est => (
+                            <div key={est.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <div><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{fmt(est.totalPrice || 0)}</span><span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: est.status === "approved" ? C.greenBg : est.status === "awarded" ? C.blueBg : C.yellowBg, color: est.status === "approved" ? C.green : est.status === "awarded" ? C.blue : C.yellow }}>{est.status}</span></div>
+                                <div style={{ display: "flex", gap: 4 }}>
+                                  {est.status === "pending" && (role === "estimator" || role === "admin") && <button onClick={() => { const sub = { ...est, status: "pending", submittedForApproval: true, submittedForApprovalAt: new Date().toISOString(), submittedForApprovalBy: user.name }; saveSubmission(sub).then(() => refresh()); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}`, background: C.white, color: C.blue, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Submit for Approval</button>}
+                                  {est.status === "pending" && role === "admin" && <button onClick={() => { handleApprove(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.green, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓ Approve</button>}
+                                  {est.status === "approved" && <button onClick={() => { handleAward(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.blue, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>🏆 Award</button>}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 11, color: C.gray500 }}>{est.buildings?.length || 0} buildings · by {est.submittedBy || "—"} · {new Date(est.createdAt).toLocaleDateString()}</div>
+                              {est.submittedForApproval && <div style={{ fontSize: 10, color: C.blue, fontWeight: 600, marginTop: 4 }}>📤 Submitted for approval {est.submittedForApprovalAt ? `on ${new Date(est.submittedForApprovalAt).toLocaleDateString()}` : ""} by {est.submittedForApprovalBy || "—"}</div>}
+                            </div>
+                          ))}
+                        </div>
+                        {/* Activity log */}
+                        {job.activities && job.activities.length > 0 && <div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: C.gray400, display: "block", marginBottom: 8 }}>Activity</span>
+                          {job.activities.slice(-5).reverse().map((a, i) => (
+                            <div key={i} style={{ fontSize: 11, color: C.gray500, padding: "4px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontWeight: 600 }}>{a.by}</span> — {a.text} <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>
+                          ))}
+                        </div>}
+                        {/* Tasks */}
+                        <div style={{ marginTop: 16 }}><TasksPanel objectType="estimate_job" objectId={job.id} user={user} /></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Beam AI placeholder */}
               <div style={{ marginTop: 32, padding: "24px", borderRadius: 10, border: `2px dashed ${C.gray300}`, textAlign: "center" }}>
