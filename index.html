@@ -4905,7 +4905,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={async () => {
                       // Simulate fetching calls from JustCall API
-                      const mockCall = { id: "call_" + Date.now(), callerName: "", callerPhone: "+1 " + Math.floor(1000000000 + Math.random() * 9000000000), duration: Math.floor(Math.random() * 600), direction: "inbound", recordingUrl: "", timestamp: new Date().toISOString(), archived: false, convertedToLead: false };
+                      const mockCall = { id: "call_" + Date.now(), callerName: "Incoming Caller", callerPhone: "+1 " + Math.floor(1000000000 + Math.random() * 9000000000), duration: Math.floor(Math.random() * 600), direction: "inbound", recordingUrl: "", timestamp: new Date().toISOString(), archived: false, convertedToLead: false };
                       saveCallLog([mockCall, ...callLog]);
                     }} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.navy}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>↻ Sync Calls</button>
                   </div>
@@ -5050,13 +5050,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const filtered = activeOrArchived.filter(p => {
         if (marketFilter !== "All" && p.market !== marketFilter) return false;
         if (statusFilter !== "All" && p.status !== statusFilter) return false;
-        if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.client.toLowerCase().includes(search.toLowerCase())) return false;
+        if (search && !(p.name || "").toLowerCase().includes(search.toLowerCase()) && !(p.client || "").toLowerCase().includes(search.toLowerCase())) return false;
         return true;
       });
       const liveProjects = roleFiltered.filter(p => !p.archived);
       const archivedCount = roleFiltered.filter(p => p.archived).length;
       const activeProjects = liveProjects.filter(p => p.status !== "Complete");
-      const totalContractValue = liveProjects.reduce((s, p) => s + p.contractValue, 0);
+      const totalContractValue = liveProjects.reduce((s, p) => s + (p.contractValue || 0), 0);
       const delayedCount = liveProjects.filter(p => p.status === "Delayed").length;
       const atRisk = liveProjects.filter(p => getMarginHealth(p.estimatedMargin, p.currentMargin) !== "healthy").length;
       const handleCreate = (np) => { setProjects(prev => [np, ...prev]); setShowCreate(false); };
