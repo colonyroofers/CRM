@@ -4469,7 +4469,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 22, fontWeight: 800 }}>{formatCurrency(project.contractValue)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{formatCurrency(project.contractValue || 0)}</div>
                 <div style={{ fontSize: 12, opacity: 0.6 }}>Contract Value</div>
               </div>
             </div>
@@ -4496,10 +4496,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <ProgressBar value={project.progress} color={project.status === "Delayed" ? C.yellow : C.green} />
                 </Sec>
                 <Sec title="Financial Summary">
-                  <Row label="Contract Value" value={formatCurrency(project.contractValue)} />
-                  <Row label="Estimated Cost" value={formatCurrency(project.estimatedCost)} />
-                  <Row label="Cost to Date" value={formatCurrency(project.currentCost)} />
-                  <Row label="Remaining Budget" value={formatCurrency(project.estimatedCost - project.currentCost)} accent={project.currentCost > project.estimatedCost ? C.red : C.green} />
+                  <Row label="Contract Value" value={formatCurrency(project.contractValue || 0)} />
+                  <Row label="Estimated Cost" value={formatCurrency(project.estimatedCost || 0)} />
+                  <Row label="Cost to Date" value={formatCurrency(project.currentCost || 0)} />
+                  <Row label="Remaining Budget" value={formatCurrency((project.estimatedCost || 0) - (project.currentCost || 0))} accent={(project.currentCost || 0) > (project.estimatedCost || 0) ? C.red : C.green} />
                   <Row label="Est. Margin" value={`${project.estimatedMargin}%`} />
                   <Row label="Current Margin" value={`${project.contractValue ? Math.round(((project.contractValue - (project.currentCost || 0)) / project.contractValue) * 100) : 0}%`} accent={marginHealth === "critical" ? C.red : marginHealth === "warning" ? C.yellow : C.green} />
                 </Sec>
@@ -9686,7 +9686,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               </div>
             )}
             {messages.filter(m => !m.toolUse && !m.toolResult).map((m, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+              <div key={m.id || (m.role + '_' + i)} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
                 <div style={{
                   maxWidth: "85%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
                   background: m.role === "user" ? `linear-gradient(135deg, ${C.navy}, ${C.navyLight})` : m.error ? C.redBg : C.gray50,
