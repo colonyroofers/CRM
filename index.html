@@ -8673,6 +8673,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const upcoming = filtered.filter(t => !t.completed && t.dueDate && t.dueDate > today);
       const noDue = filtered.filter(t => !t.completed && !t.dueDate);
       const completedTasks = filtered.filter(t => t.completed);
+      // Always gather completed tasks for the "Completed" section, even when filter is "open"
+      const allCompletedForUser = allTasks.filter(t => t.completed && (filterAssignee === "all" || filterAssignee === "mine" ? (t.assignee === user.name || t.createdBy === user.name) : t.assignee === filterAssignee)).sort((a, b) => (b.completedAt || b.createdAt || "").localeCompare(a.completedAt || a.createdAt || ""));
+      const [showCompleted, setShowCompleted] = useState(false);
       const totalOpen = allTasks.filter(t => !t.completed).length;
       const myOpen = allTasks.filter(t => !t.completed && (t.assignee === user.name || t.createdBy === user.name)).length;
       const overdueCount = allTasks.filter(t => !t.completed && t.dueDate && t.dueDate < today).length;
@@ -8876,9 +8879,16 @@ Extract every identifiable expense. Use the most specific category possible. If 
             React.createElement(SectionHeader, { label: "No Due Date", count: noDue.length, color: C.gray400 }),
             noDue.map(t => React.createElement(TaskRow, { key: t.id + t._key, t }))
           ),
-          completedTasks.length > 0 && React.createElement(React.Fragment, null,
+          filterStatus === "completed" && completedTasks.length > 0 && React.createElement(React.Fragment, null,
             React.createElement(SectionHeader, { label: "Completed", count: completedTasks.length, color: C.green }),
             completedTasks.map(t => React.createElement(TaskRow, { key: t.id + t._key, t }))
+          ),
+          filterStatus === "open" && allCompletedForUser.length > 0 && React.createElement("div", { style: { marginTop: 24, borderTop: `1px solid ${C.gray200}`, paddingTop: 16 } },
+            React.createElement("button", { onClick: () => setShowCompleted(!showCompleted), style: { display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", padding: "4px 0", fontSize: 12, fontWeight: 700, color: C.gray500 } },
+              React.createElement("span", { style: { transform: showCompleted ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" } }, "▶"),
+              "Completed (" + allCompletedForUser.length + ")"
+            ),
+            showCompleted && allCompletedForUser.slice(0, 25).map(t => React.createElement(TaskRow, { key: t.id + t._key, t }))
           ),
           filtered.length === 0 && React.createElement("div", { style: { padding: 40, textAlign: "center", color: C.gray400 } },
             React.createElement("div", { style: { fontSize: 32, marginBottom: 8 } }, "✅"),
