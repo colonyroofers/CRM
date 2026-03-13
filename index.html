@@ -841,6 +841,150 @@
       { name: "Zach Reece", email: "zach@colonyroofers.com" },
     ];
 
+    // ============================================================
+    // VENDOR PRICING REQUESTS (used inside Estimating module)
+    // ============================================================
+    function VendorPricingRequests({ job, user, entities, setSalesLeads }) {
+      const [showForm, setShowForm] = useState(false);
+      const [selectedVendor, setSelectedVendor] = useState("");
+      const [vendorEmail, setVendorEmail] = useState("");
+      const [pricingItems, setPricingItems] = useState("");
+      const [notes, setNotes] = useState("");
+      const [sending, setSending] = useState(false);
+      const pricingRequests = job?.vendorPricingRequests || [];
+
+      // Get vendors from entities or fallback
+      const vendors = [];
+      if (entities?.companies) {
+        entities.companies.filter(c => c.type === "vendor" || c.type === "Vendor" || c.category === "vendor").forEach(c => {
+          vendors.push({ id: c.id, name: c.name, email: c.email || "" });
+        });
+      }
+      // Also add known vendors
+      const knownVendors = [
+        { id: "v_abc", name: "ABC Supply", email: "" },
+        { id: "v_srs", name: "SRS Distribution", email: "" },
+        { id: "v_beacon", name: "Beacon Roofing Supply", email: "" },
+        { id: "v_qxo", name: "QXO", email: "" },
+      ];
+      knownVendors.forEach(kv => { if (!vendors.find(v => v.name === kv.name)) vendors.push(kv); });
+
+      const handleSendRequest = async () => {
+        if (!selectedVendor || !vendorEmail || !pricingItems.trim()) { alert("Please fill in vendor, email, and items."); return; }
+        setSending(true);
+        try {
+          const vendor = vendors.find(v => v.id === selectedVendor) || { name: selectedVendor };
+          const request = {
+            id: "pr_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+            vendorId: selectedVendor,
+            vendorName: vendor.name,
+            vendorEmail: vendorEmail,
+            items: pricingItems,
+            notes: notes,
+            status: "sent",
+            sentAt: new Date().toISOString(),
+            sentBy: user?.name || "User",
+            responses: []
+          };
+          // Send email via the CRM's email system
+          if (firestoreDb) {
+            await firestoreDb.collection("cr_emails_outbound").add({
+              to: vendorEmail,
+              subject: `Pricing Request — ${job.jobName || "Project"} — Colony Roofers`,
+              body: `Hi,\n\nWe are requesting pricing for the following items for our project "${job.jobName || "Project"}":\n\n${pricingItems}\n\n${notes ? "Notes: " + notes + "\n\n" : ""}Please reply to this email with your pricing at your earliest convenience.\n\nThank you,\n${user?.name || "Colony Roofers"}\nColony Roofers`,
+              entityType: "estimate_job",
+              entityId: job.id,
+              type: "vendor_pricing_request",
+              createdAt: new Date().toISOString()
+            });
+          }
+          // Save pricing request to the job
+          const updatedRequests = [...pricingRequests, request];
+          setSalesLeads(prev => prev.map(l => l.id === job.id ? {
+            ...l,
+            vendorPricingRequests: updatedRequests,
+            activities: [...(l.activities || []), { type: "pricing_request", text: `Pricing request sent to ${vendor.name}`, by: user?.name || "User", at: new Date().toISOString() }]
+          } : l));
+          setShowForm(false);
+          setSelectedVendor("");
+          setVendorEmail("");
+          setPricingItems("");
+          setNotes("");
+        } catch (err) {
+          console.error("Error sending pricing request:", err);
+          alert("Error: " + err.message);
+        } finally { setSending(false); }
+      };
+
+      const updateRequestStatus = (reqId, status, responseData) => {
+        const updated = pricingRequests.map(r => r.id === reqId ? {
+          ...r, status,
+          responses: [...(r.responses || []), { ...responseData, recordedAt: new Date().toISOString() }]
+        } : r);
+        setSalesLeads(prev => prev.map(l => l.id === job.id ? { ...l, vendorPricingRequests: updated } : l));
+      };
+
+      const statusColors = { sent: C.blue, received: C.green, pending: C.yellow, declined: C.red };
+
+      return React.createElement("div", { style: { marginBottom: 16 } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } },
+          React.createElement("span", { style: { fontSize: 14, fontWeight: 700, color: C.navy } }, "Vendor Pricing (" + pricingRequests.length + ")"),
+          React.createElement("button", { onClick: () => setShowForm(true), style: { padding: "6px 14px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" } }, "📧 Request Pricing")
+        ),
+        // Existing pricing requests
+        pricingRequests.length > 0 ? pricingRequests.map(req =>
+          React.createElement("div", { key: req.id, style: { padding: "10px 14px", borderRadius: 8, border: "1px solid " + C.gray200, marginBottom: 6, background: C.white } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 } },
+              React.createElement("div", null,
+                React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.navy } }, req.vendorName),
+                React.createElement("span", { style: { marginLeft: 8, padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: (statusColors[req.status] || C.gray400) + "20", color: statusColors[req.status] || C.gray400 } }, req.status)
+              ),
+              React.createElement("span", { style: { fontSize: 10, color: C.gray400 } }, new Date(req.sentAt).toLocaleDateString())
+            ),
+            React.createElement("div", { style: { fontSize: 11, color: C.gray500, marginBottom: 4 } }, "Items: " + (req.items.length > 80 ? req.items.substring(0, 80) + "..." : req.items)),
+            req.status === "sent" && React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
+              React.createElement("button", { onClick: () => updateRequestStatus(req.id, "received", { type: "received", note: "Response received" }), style: { padding: "4px 10px", borderRadius: 5, border: "none", background: C.green, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" } }, "✓ Mark Received"),
+              React.createElement("button", { onClick: () => { const price = prompt("Enter quoted price from " + req.vendorName + ":"); if (price) updateRequestStatus(req.id, "received", { type: "quote", amount: parseFloat(price), note: "Quote: $" + price }); }, style: { padding: "4px 10px", borderRadius: 5, border: "1px solid " + C.blue, background: C.white, color: C.blue, fontSize: 10, fontWeight: 700, cursor: "pointer" } }, "💰 Log Quote")
+            ),
+            req.responses?.length > 0 && React.createElement("div", { style: { marginTop: 6, padding: "6px 8px", borderRadius: 4, background: C.greenBg, fontSize: 11, color: C.gray600 } },
+              req.responses.map((resp, i) => React.createElement("div", { key: i }, resp.amount ? "Quote: $" + resp.amount.toLocaleString() : resp.note, " — ", new Date(resp.recordedAt).toLocaleDateString()))
+            )
+          )
+        ) : React.createElement("div", { style: { padding: 14, textAlign: "center", color: C.gray400, fontSize: 12, background: C.gray50, borderRadius: 8 } }, "No pricing requests yet. Send one to get vendor quotes."),
+        // New pricing request form
+        showForm ? React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }, onClick: () => setShowForm(false) },
+          React.createElement("div", { style: { width: 500, background: C.white, borderRadius: 12, padding: 24 }, onClick: e => e.stopPropagation() },
+            React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 16px" } }, "📧 Request Vendor Pricing"),
+            React.createElement("div", { style: { display: "grid", gap: 12 } },
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Vendor"),
+                React.createElement("select", { value: selectedVendor, onChange: e => { setSelectedVendor(e.target.value); const v = vendors.find(v2 => v2.id === e.target.value); if (v?.email) setVendorEmail(v.email); }, style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } },
+                  React.createElement("option", { value: "" }, "— Select vendor —"),
+                  vendors.map(v => React.createElement("option", { key: v.id, value: v.id }, v.name))
+                )
+              ),
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Vendor Email"),
+                React.createElement("input", { type: "email", value: vendorEmail, onChange: e => setVendorEmail(e.target.value), placeholder: "vendor@example.com", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, boxSizing: "border-box" } })
+              ),
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Items to Price"),
+                React.createElement("textarea", { value: pricingItems, onChange: e => setPricingItems(e.target.value), placeholder: "List materials, quantities, and specs...\ne.g., 50 squares GAF Timberline HDZ Charcoal\n2000 LF drip edge\n50 rolls synthetic underlayment", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 100, boxSizing: "border-box" } })
+              ),
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Additional Notes"),
+                React.createElement("textarea", { value: notes, onChange: e => setNotes(e.target.value), placeholder: "Delivery date, special requirements...", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 40, boxSizing: "border-box" } })
+              ),
+              React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+                React.createElement("button", { onClick: () => setShowForm(false), style: { padding: "8px 16px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, fontSize: 12, cursor: "pointer" } }, "Cancel"),
+                React.createElement("button", { onClick: handleSendRequest, disabled: sending, style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, sending ? "Sending..." : "Send Pricing Request")
+              )
+            )
+          )
+        ) : null
+      );
+    }
+
     function EstimatingModule({ user, role, entities, salesLeads, setSalesLeads, crmUsers }) {
       const { companies, properties, contacts } = entities || {};
       const [view, setView] = useState("kanban"); // "kanban" | "new" | "submissions"
@@ -1309,6 +1453,8 @@
                             </div>
                           ))}
                         </div>
+                        {/* Vendor Pricing Requests */}
+                        <VendorPricingRequests job={job} user={user} entities={entities} setSalesLeads={setSalesLeads} />
                         {/* Activity log */}
                         {job.activities && job.activities.length > 0 && <div>
                           <span style={{ fontSize: 12, fontWeight: 700, color: C.gray400, display: "block", marginBottom: 8 }}>Activity</span>
@@ -1672,21 +1818,170 @@
     }
 
     // ============================================================
+    // CHANGE ORDER TAB — Contract-aware change orders
+    // ============================================================
+
+    function ChangeOrderTab({ project, onUpdateProject, user }) {
+      const [contractFile, setContractFile] = useState(null);
+      const [contractText, setContractText] = useState(project?.contractTemplate || "");
+      const [uploading, setUploading] = useState(false);
+      const [parsing, setParsing] = useState(false);
+      const [contractFormat, setContractFormat] = useState(project?.changeOrderFormat || null);
+      const fileRef = useRef(null);
+      const role = user?.role || "admin";
+
+      const handleContractUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setContractFile(file);
+        setUploading(true);
+        setParsing(true);
+        try {
+          // Upload contract to Firebase Storage
+          let downloadURL = "";
+          if (firebaseStorage) {
+            const storageRef = firebaseStorage.ref(`contracts/${project.id}/${file.name}`);
+            const snap = await storageRef.put(file);
+            downloadURL = await snap.ref.getDownloadURL();
+          }
+          // Extract text from PDF or doc
+          let extractedText = "";
+          if (file.type === "application/pdf" && window.pdfjsLib) {
+            const arrayBuf = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
+            for (let i = 1; i <= Math.min(pdf.numPages, 20); i++) {
+              const page = await pdf.getPage(i);
+              const content = await page.getTextContent();
+              extractedText += content.items.map(item => item.str).join(" ") + "\n";
+            }
+          } else {
+            extractedText = await file.text();
+          }
+          // Parse change order format from contract
+          const coSections = extractContractCOFormat(extractedText);
+          setContractText(extractedText);
+          setContractFormat(coSections);
+          // Save to project
+          onUpdateProject(project.id, {
+            contractTemplate: extractedText,
+            contractFileURL: downloadURL,
+            contractFileName: file.name,
+            changeOrderFormat: coSections
+          });
+        } catch (err) {
+          console.error("Contract upload error:", err);
+          alert("Error processing contract: " + err.message);
+        } finally {
+          setUploading(false);
+          setParsing(false);
+        }
+      };
+
+      // Simple parser to extract change order requirements from contract text
+      function extractContractCOFormat(text) {
+        const lower = text.toLowerCase();
+        const format = {
+          detected: true,
+          requiresWrittenNotice: lower.includes("written notice") || lower.includes("written request"),
+          requiresOwnerApproval: lower.includes("owner approval") || lower.includes("owner's approval") || lower.includes("approved by owner"),
+          noticePeriodDays: null,
+          requiredFields: ["description", "reason", "amount"],
+          pricing_method: null,
+          formatNotes: []
+        };
+        // Detect notice period
+        const noticeMatch = text.match(/(\d+)\s*(?:calendar\s*)?days?\s*(?:prior|advance|written)\s*notice/i);
+        if (noticeMatch) { format.noticePeriodDays = parseInt(noticeMatch[1]); format.formatNotes.push(`Requires ${noticeMatch[1]}-day advance notice`); }
+        // Detect pricing method
+        if (lower.includes("time and materials") || lower.includes("t&m")) { format.pricing_method = "time_and_materials"; format.requiredFields.push("laborHours", "materialCost"); format.formatNotes.push("Pricing: Time & Materials"); }
+        if (lower.includes("unit price") || lower.includes("per square")) { format.pricing_method = "unit_price"; format.requiredFields.push("unitQuantity", "unitPrice"); format.formatNotes.push("Pricing: Unit Price"); }
+        if (lower.includes("lump sum")) { format.pricing_method = "lump_sum"; format.formatNotes.push("Pricing: Lump Sum"); }
+        // Detect required documentation
+        if (lower.includes("photo") || lower.includes("photograph")) { format.requiredFields.push("photos"); format.formatNotes.push("Photos required"); }
+        if (lower.includes("scope of work") || lower.includes("detailed scope")) { format.requiredFields.push("scopeOfWork"); format.formatNotes.push("Detailed scope of work required"); }
+        if (lower.includes("schedule impact") || lower.includes("time extension")) { format.requiredFields.push("scheduleImpact"); format.formatNotes.push("Schedule impact assessment required"); }
+        if (lower.includes("architect") || lower.includes("engineer")) {
+          if (lower.includes("architect approval") || lower.includes("engineer approval")) { format.requiresArchitectApproval = true; format.formatNotes.push("Requires architect/engineer approval"); }
+        }
+        if (lower.includes("aia g701") || lower.includes("g701")) { format.formatNotes.push("AIA G701 format required"); format.aiaFormat = true; }
+        if (lower.includes("aia g702") || lower.includes("g702")) { format.formatNotes.push("AIA G702 continuation sheet"); }
+        if (format.formatNotes.length === 0) { format.formatNotes.push("Standard change order format (no specific contract requirements detected)"); }
+        return format;
+      }
+
+      return React.createElement("div", null,
+        // Contract Upload Section
+        React.createElement("div", { style: { marginBottom: 24, padding: 20, borderRadius: 10, border: "2px dashed " + (contractFormat ? C.green + "60" : C.gray300), background: contractFormat ? C.greenBg : C.gray50 } },
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
+            React.createElement("div", null,
+              React.createElement("h3", { style: { fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 4px" } }, "📄 Contract Template"),
+              React.createElement("p", { style: { fontSize: 12, color: C.gray500, margin: 0 } },
+                contractFormat ? "Contract uploaded — change order format detected" : "Upload the project contract to auto-enforce change order format"
+              )
+            ),
+            React.createElement("button", {
+              onClick: () => fileRef.current?.click(),
+              style: { padding: "8px 16px", borderRadius: 6, border: "none", background: contractFormat ? C.gray200 : C.navy, color: contractFormat ? C.navy : C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" }
+            }, uploading ? "Processing..." : (contractFormat ? "Replace Contract" : "Upload Contract"))
+          ),
+          React.createElement("input", { ref: fileRef, type: "file", accept: ".pdf,.doc,.docx,.txt", style: { display: "none" }, onChange: handleContractUpload }),
+          project?.contractFileName && React.createElement("div", { style: { fontSize: 11, color: C.gray500, marginBottom: 8 } }, "📎 " + project.contractFileName),
+          // Show detected format requirements
+          contractFormat && contractFormat.formatNotes?.length > 0 && React.createElement("div", { style: { marginTop: 8, padding: 12, borderRadius: 8, background: C.white, border: "1px solid " + C.gray200 } },
+            React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 6 } }, "Detected Change Order Requirements:"),
+            contractFormat.formatNotes.map((note, i) =>
+              React.createElement("div", { key: i, style: { fontSize: 11, color: C.gray600, padding: "2px 0", display: "flex", alignItems: "center", gap: 6 } },
+                React.createElement("span", { style: { color: C.green } }, "✓"), note
+              )
+            ),
+            contractFormat.requiredFields && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: C.gray500 } },
+              "Required fields: " + contractFormat.requiredFields.join(", ")
+            )
+          )
+        ),
+        // Render existing ChangeOrderPanel with format enforcement
+        React.createElement(ChangeOrderPanel, { project, onUpdateProject: (updatedProject) => {
+          // ChangeOrderPanel passes full project object; extract just the changed fields
+          const { id, ...updates } = updatedProject;
+          onUpdateProject(project.id, updates);
+        }, user, role, contractFormat })
+      );
+    }
+
+    // ============================================================
     // CHANGE ORDER TRACKING COMPONENT
     // ============================================================
 
-    function ChangeOrderPanel({ project, onUpdateProject, user, role }) {
+    function ChangeOrderPanel({ project, onUpdateProject, user, role, contractFormat }) {
       const [showForm, setShowForm] = useState(false);
-      const [formData, setFormData] = useState({ description: "", reason: "scope_change", amount: 0, costImpact: 0, notes: "" });
+      const defaultFormData = { description: "", reason: "scope_change", amount: 0, costImpact: 0, notes: "", scopeOfWork: "", scheduleImpact: "", laborHours: 0, materialCost: 0, unitQuantity: 0, unitPrice: 0, photos: [] };
+      const [formData, setFormData] = useState(defaultFormData);
       const changeOrders = project?.changeOrders || [];
       const approvedTotal = changeOrders.filter(co => co.status === "approved").reduce((s, co) => s + (co.amount || 0), 0);
       const pendingCount = changeOrders.filter(co => co.status === "pending_approval").length;
 
+      // Validate required fields from contract format
+      const validateContractFormat = () => {
+        if (!contractFormat?.requiredFields) return true;
+        const rf = contractFormat.requiredFields;
+        if (rf.includes("scopeOfWork") && !formData.scopeOfWork.trim()) { alert("Contract requires a detailed Scope of Work."); return false; }
+        if (rf.includes("scheduleImpact") && !formData.scheduleImpact.trim()) { alert("Contract requires a Schedule Impact assessment."); return false; }
+        if (rf.includes("laborHours") && contractFormat.pricing_method === "time_and_materials" && !formData.laborHours) { alert("Contract requires labor hours (T&M pricing)."); return false; }
+        return true;
+      };
+
       const handleCreate = () => {
-        const co = { id: generateId(), number: "CO-" + String(changeOrders.length + 1).padStart(3, "0"), ...formData, status: "pending_approval", requestedBy: user.name, requestDate: new Date().toISOString(), approvedBy: null, approvalDate: null };
+        if (!validateContractFormat()) return;
+        const co = {
+          id: generateId(), number: "CO-" + String(changeOrders.length + 1).padStart(3, "0"), ...formData,
+          status: contractFormat?.requiresOwnerApproval ? "pending_owner_approval" : "pending_approval",
+          requestedBy: user.name, requestDate: new Date().toISOString(), approvedBy: null, approvalDate: null,
+          pricingMethod: contractFormat?.pricing_method || "lump_sum",
+          contractFormatApplied: !!contractFormat
+        };
         onUpdateProject({ ...project, changeOrders: [...changeOrders, co] });
         setShowForm(false);
-        setFormData({ description: "", reason: "scope_change", amount: 0, costImpact: 0, notes: "" });
+        setFormData(defaultFormData);
       };
 
       const handleApprove = (coId) => {
@@ -1753,6 +2048,39 @@
                 React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Notes"),
                 React.createElement("textarea", { value: formData.notes, onChange: e => setFormData({...formData, notes: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 40 } })
               ),
+              // Contract-required extra fields
+              contractFormat?.requiredFields?.includes("scopeOfWork") ? React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Scope of Work (Required by Contract)"),
+                React.createElement("textarea", { value: formData.scopeOfWork, onChange: e => setFormData({...formData, scopeOfWork: e.target.value}), placeholder: "Detailed description of work to be performed...", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12, minHeight: 60 } })
+              ) : null,
+              contractFormat?.requiredFields?.includes("scheduleImpact") ? React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Schedule Impact (Required by Contract)"),
+                React.createElement("textarea", { value: formData.scheduleImpact, onChange: e => setFormData({...formData, scheduleImpact: e.target.value}), placeholder: "Impact on project timeline, any time extensions needed...", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12, minHeight: 40 } })
+              ) : null,
+              contractFormat?.pricing_method === "time_and_materials" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Labor Hours (T&M)"),
+                  React.createElement("input", { type: "number", value: formData.laborHours, onChange: e => setFormData({...formData, laborHours: parseFloat(e.target.value) || 0}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12 } })
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Material Cost (T&M)"),
+                  React.createElement("input", { type: "number", value: formData.materialCost, onChange: e => setFormData({...formData, materialCost: parseFloat(e.target.value) || 0}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12 } })
+                )
+              ) : null,
+              contractFormat?.pricing_method === "unit_price" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Unit Quantity"),
+                  React.createElement("input", { type: "number", value: formData.unitQuantity, onChange: e => setFormData({...formData, unitQuantity: parseFloat(e.target.value) || 0}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12 } })
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.red, display: "block", marginBottom: 4 } }, "Unit Price ($)"),
+                  React.createElement("input", { type: "number", value: formData.unitPrice, onChange: e => setFormData({...formData, unitPrice: parseFloat(e.target.value) || 0}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.red + "40", fontSize: 12 } })
+                )
+              ) : null,
+              // Contract format reminder
+              contractFormat ? React.createElement("div", { style: { padding: 10, borderRadius: 6, background: C.yellowBg, border: "1px solid " + C.yellow + "40", fontSize: 11, color: C.gray600 } },
+                "📋 This change order will follow the format specified in the uploaded contract" + (contractFormat.aiaFormat ? " (AIA G701)" : "") + "."
+              ) : null,
               React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
                 React.createElement("button", { onClick: () => setShowForm(false), style: { padding: "8px 16px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, fontSize: 12, cursor: "pointer" } }, "Cancel"),
                 React.createElement("button", { onClick: handleCreate, style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Create Change Order")
@@ -4029,6 +4357,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { id: "overview", label: "Overview" }, { id: "documents", label: "Documents" },
         { id: "schedule", label: "Schedule" }, { id: "orders", label: "Orders" },
         { id: "logs", label: "Daily Logs" }, { id: "budget", label: "Budget" },
+        { id: "change_orders", label: "Change Orders" },
         { id: "email", label: "📧 Email" },
       ];
       const Sec = ({ title, children }) => <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px" }}>{title}</h4>{children}</div>;
@@ -4100,6 +4429,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {activeTab === "orders" && <OrdersTab project={project} onUpdateProject={handleProjectUpdate} supers={supers} />}
               {activeTab === "logs" && <DailyLogsTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "budget" && <BudgetTab project={project} onUpdateProject={handleProjectUpdate} />}
+              {activeTab === "change_orders" && <ChangeOrderTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "email" && (
                 <div>
                   <div style={{ marginBottom: 20 }}>
