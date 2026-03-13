@@ -515,20 +515,41 @@
         const jobEsts = estimatesForLead(job.id);
         const jobApproved = approvedForLead(job.id);
         const jobPending = pendingForLead(job.id);
-        if (targetColId === "unassigned" && job.estimator) {
-          if (confirm("Remove estimator assignment?")) { handleAssignEstimator(job.id, ""); }
-        } else if (targetColId === "assigned" && !job.estimator) {
-          const name = prompt("Assign estimator (enter name):");
-          if (name) handleAssignEstimator(job.id, name);
-        } else if (targetColId === "in_progress" && !job.estimator) {
-          const name = prompt("Assign estimator first (enter name):");
-          if (name) { handleAssignEstimator(job.id, name); startEstimate(job.id); }
-        } else if (targetColId === "in_progress" && job.estimator && jobEsts.length === 0) {
-          startEstimate(job.id);
-        } else if (targetColId === "approved" && jobPending.length > 0 && (role === "admin" || role === "lead_estimator")) {
-          if (confirm(`Approve ${jobPending.length} pending estimate(s)?`)) { jobPending.forEach(est => handleApprove(est)); }
+        // Determine current column
+        const currentCol = !job.estimator ? "unassigned" : (jobApproved.length > 0 ? "approved" : (jobPending.length > 0 ? "in_progress" : "assigned"));
+        if (targetColId === currentCol) { setDraggedJobId(null); return; } // no-op same column
+        if (targetColId === "unassigned") {
+          if (job.estimator && confirm("Remove estimator assignment?")) { handleAssignEstimator(job.id, ""); }
+        } else if (targetColId === "assigned") {
+          if (!job.estimator) {
+            const name = prompt("Assign estimator (enter name):");
+            if (name) handleAssignEstimator(job.id, name);
+          }
+          // If already has estimator, moving back to assigned is just a visual reclassification — estimates would need removal
+        } else if (targetColId === "in_progress") {
+          if (!job.estimator) {
+            const name = prompt("Assign estimator first (enter name):");
+            if (name) { handleAssignEstimator(job.id, name); startEstimate(job.id); }
+          } else if (jobEsts.length === 0) {
+            startEstimate(job.id);
+          }
+          // Already in progress if has estimator + pending estimates
+        } else if (targetColId === "approved") {
+          if (jobPending.length > 0 && (role === "admin" || role === "lead_estimator")) {
+            if (confirm(`Approve ${jobPending.length} pending estimate(s)?`)) { jobPending.forEach(est => handleApprove(est)); }
+          } else if (jobPending.length > 0) {
+            alert("Only admins or lead estimators can approve estimates.");
+          } else if (jobEsts.length === 0) {
+            alert("Create and submit an estimate before approving.");
+          }
         }
         setDraggedJobId(null);
+      };
+
+      // Update a lead's estimating fields (bid due, estimator, type, slope, material)
+      const handleUpdateJobField = (jobId, field, value) => {
+        setSalesLeads(prev => prev.map(l => l.id === jobId ? { ...l, [field]: value, activities: [...(l.activities || []), { type: "field_update", text: `Updated ${field} to "${value}"`, by: user.name, at: new Date().toISOString() }] } : l));
+        setSelectedKanbanJob(prev => prev && prev.id === jobId ? { ...prev, [field]: value } : prev);
       };
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
@@ -839,14 +860,14 @@
                         <button onClick={() => setSelectedKanbanJob(null)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 18 }}>✕</button>
                       </div>
                       <div style={{ padding: "20px 28px" }}>
-                        {/* Job details */}
+                        {/* Job details — editable fields */}
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
                           <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Company</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{co?.name || "—"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Estimator</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.estimator || "Unassigned"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Bid Due</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.bidDueDate ? new Date(job.bidDueDate + "T12:00:00").toLocaleDateString() : "No date"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Type</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.constructionType || "—"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Roof Slope</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.roofSlope || "—"}</div></div>
-                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Material</div><div style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{job.estimateMaterial || "—"}</div></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Estimator</div><input value={job.estimator || ""} onChange={e => handleUpdateJobField(job.id, "estimator", e.target.value)} placeholder="Assign estimator" style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }} /></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Bid Due</div><input type="date" value={job.bidDueDate || ""} onChange={e => handleUpdateJobField(job.id, "bidDueDate", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }} /></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Type</div><select value={job.constructionType || ""} onChange={e => handleUpdateJobField(job.id, "constructionType", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Replacement">Replacement</option><option value="New Construction">New Construction</option></select></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Roof Slope</div><select value={job.roofSlope || ""} onChange={e => handleUpdateJobField(job.id, "roofSlope", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Steep Slope">Steep Slope</option><option value="Low-Slope">Low-Slope</option></select></div>
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50 }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600, marginBottom: 4 }}>Material</div><select value={job.estimateMaterial || ""} onChange={e => handleUpdateJobField(job.id, "estimateMaterial", e.target.value)} style={{ width: "100%", padding: "4px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white }}><option value="Shingles">Shingles</option><option value="Tile">Tile</option><option value="TPO">TPO</option><option value="Metal">Metal</option><option value="Modified Bitumen">Modified Bitumen</option><option value="EPDM">EPDM</option><option value="PVC">PVC</option></select></div>
                         </div>
                         {/* Scope & Notes */}
                         {(job.scopeOfWork || job.estimatingNotes) && <div style={{ marginBottom: 20, padding: "12px 14px", borderRadius: 8, background: C.blueBg + "30", border: `1px solid ${C.blue}15` }}>
