@@ -6732,7 +6732,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       ];
 
       // ── Tool execution ───────────────────────────────────────
-      const executeTool = (name, input) => {
+      const executeTool = async (name, input) => {
         const id = generateId();
         const now = new Date().toISOString();
         try {
@@ -6955,7 +6955,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
             // Execute tools
             const toolResults = [];
             for (const tool of toolBlocks) {
-              const result = executeTool(tool.name, tool.input);
+              const result = await executeTool(tool.name, tool.input);
               toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(result) });
               if (result.success && result.message) actionsTaken.push(result.message);
             }
