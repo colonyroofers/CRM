@@ -1827,6 +1827,89 @@
     // CHANGE ORDER TAB — Contract-aware change orders
     // ============================================================
 
+    function SafetyTab({ project, onUpdateProject, user }) {
+      const [showLogIncident, setShowLogIncident] = useState(false);
+      const [incForm, setIncForm] = useState({ date: new Date().toISOString().split('T')[0], type: "near_miss", description: "", correctiveAction: "" });
+      const incidents = project.safetyIncidents || [];
+      const handleProjectUpdate = (updates) => onUpdateProject(updates);
+      return (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Safety Incidents</h3>
+              <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Track near misses, first aid, recordable and lost time incidents</p>
+            </div>
+            <button onClick={() => setShowLogIncident(!showLogIncident)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{I.plus} Log Incident</button>
+          </div>
+          {showLogIncident && (
+            <div style={{ background: C.gray50, border: `1px solid ${C.gray200}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Date</label>
+                  <input style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12 }} type="date" value={incForm.date} onChange={e => setIncForm({...incForm, date: e.target.value})} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Type</label>
+                  <select style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12 }} value={incForm.type} onChange={e => setIncForm({...incForm, type: e.target.value})}>
+                    <option value="near_miss">Near Miss</option>
+                    <option value="first_aid">First Aid</option>
+                    <option value="recordable">Recordable</option>
+                    <option value="lost_time">Lost Time</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Description</label>
+                <textarea style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", minHeight: 60 }} value={incForm.description} onChange={e => setIncForm({...incForm, description: e.target.value})} placeholder="What happened..." />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Corrective Action</label>
+                <textarea style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", minHeight: 60 }} value={incForm.correctiveAction} onChange={e => setIncForm({...incForm, correctiveAction: e.target.value})} placeholder="Steps to prevent recurrence..." />
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setShowLogIncident(false)} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                <button onClick={() => {
+                  if (incForm.description) {
+                    handleProjectUpdate({ safetyIncidents: [...incidents, { ...incForm, id: generateId(), reportedBy: user.name, resolved: false, createdAt: new Date().toISOString() }] });
+                    setIncForm({ date: new Date().toISOString().split('T')[0], type: "near_miss", description: "", correctiveAction: "" });
+                    setShowLogIncident(false);
+                  }
+                }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: incForm.description ? `linear-gradient(135deg, ${C.red}, ${C.redDark})` : C.gray300, color: C.white, fontSize: 12, fontWeight: 600, cursor: incForm.description ? "pointer" : "default" }}>Log Incident</button>
+              </div>
+            </div>
+          )}
+          {incidents.length > 0 ? (
+            <div style={{ borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden", background: C.white }}>
+              {incidents.slice().reverse().map((inc) => {
+                const typeColors = { near_miss: C.yellow, first_aid: "#F97316", recordable: C.red, lost_time: "#991B1B" };
+                return (
+                  <div key={inc.id} style={{ padding: 16, borderBottom: `1px solid ${C.gray100}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
+                      <div style={{ display: "flex", gap: 10, flex: 1 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, background: typeColors[inc.type] + "20", color: typeColors[inc.type], padding: "3px 8px", borderRadius: 4, textTransform: "uppercase", whiteSpace: "nowrap" }}>{inc.type.replace('_', ' ')}</span>
+                        <span style={{ fontSize: 12, color: C.gray500 }}>{new Date(inc.date).toLocaleDateString()}</span>
+                      </div>
+                      <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={inc.resolved || false} onChange={e => handleProjectUpdate({ safetyIncidents: incidents.map(x => x.id === inc.id ? {...x, resolved: e.target.checked} : x) })} style={{ cursor: "pointer" }} />
+                        <span style={{ fontSize: 11, color: C.gray500 }}>Resolved</span>
+                      </label>
+                    </div>
+                    <p style={{ fontSize: 12, color: C.navy, margin: "0 0 6px", fontWeight: 500 }}>{inc.description}</p>
+                    {inc.correctiveAction && <p style={{ fontSize: 11, color: C.gray600, margin: 0 }}>Action: {inc.correctiveAction}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ padding: "40px 20px", textAlign: "center", background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
+              <p style={{ fontSize: 13, color: C.gray500, fontWeight: 500, margin: 0 }}>No incidents recorded</p>
+              <p style={{ fontSize: 11, color: C.gray400, margin: "4px 0 0" }}>This project has maintained a safe workplace</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function ChangeOrderTab({ project, onUpdateProject, user }) {
       const [contractFile, setContractFile] = useState(null);
       const [contractText, setContractText] = useState(project?.contractTemplate || "");
@@ -2590,7 +2673,8 @@
         }
         const result = await response.json();
         const text = result.content?.find(c => c.type === "text")?.text || "";
-        return JSON.parse(text.replace(/```json|```/g, "").trim());
+        try { return JSON.parse(text.replace(/```json|```/g, "").trim()); }
+        catch (parseErr) { console.error("AI response parse error:", parseErr, "Raw:", text); throw new Error("Failed to parse AI response. Please try again."); }
       };
 
       // Merge multiple extraction results
@@ -4451,88 +4535,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {activeTab === "logs" && <DailyLogsTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "budget" && <BudgetTab project={project} onUpdateProject={handleProjectUpdate} />}
               {activeTab === "change_orders" && <ChangeOrderTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
-              {activeTab === "safety" && (() => {
-                const [showLogIncident, setShowLogIncident] = useState(false);
-                const [incForm, setIncForm] = useState({ date: new Date().toISOString().split('T')[0], type: "near_miss", description: "", correctiveAction: "" });
-                const incidents = project.safetyIncidents || [];
-                const unresolved = incidents.filter(i => !i.resolved);
-                return (
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                      <div>
-                        <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>Safety Incidents</h3>
-                        <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Track near misses, first aid, recordable and lost time incidents</p>
-                      </div>
-                      <button onClick={() => setShowLogIncident(!showLogIncident)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{I.plus} Log Incident</button>
-                    </div>
-                    {showLogIncident && (
-                      <div style={{ background: C.gray50, border: `1px solid ${C.gray200}`, borderRadius: 10, padding: 16, marginBottom: 20 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Date</label>
-                            <input style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12 }} type="date" value={incForm.date} onChange={e => setIncForm({...incForm, date: e.target.value})} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Type</label>
-                            <select style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12 }} value={incForm.type} onChange={e => setIncForm({...incForm, type: e.target.value})}>
-                              <option value="near_miss">Near Miss</option>
-                              <option value="first_aid">First Aid</option>
-                              <option value="recordable">Recordable</option>
-                              <option value="lost_time">Lost Time</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Description</label>
-                          <textarea style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", minHeight: 60 }} value={incForm.description} onChange={e => setIncForm({...incForm, description: e.target.value})} placeholder="What happened..." />
-                        </div>
-                        <div style={{ marginBottom: 12 }}>
-                          <label style={{ fontSize: 10, fontWeight: 600, color: C.gray500, display: "block", marginBottom: 4, textTransform: "uppercase" }}>Corrective Action</label>
-                          <textarea style={{ width: "100%", padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit", minHeight: 60 }} value={incForm.correctiveAction} onChange={e => setIncForm({...incForm, correctiveAction: e.target.value})} placeholder="Steps to prevent recurrence..." />
-                        </div>
-                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                          <button onClick={() => setShowLogIncident(false)} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
-                          <button onClick={() => {
-                            if (incForm.description) {
-                              handleProjectUpdate({ safetyIncidents: [...incidents, { ...incForm, id: generateId(), reportedBy: user.name, resolved: false, createdAt: new Date().toISOString() }] });
-                              setIncForm({ date: new Date().toISOString().split('T')[0], type: "near_miss", description: "", correctiveAction: "" });
-                              setShowLogIncident(false);
-                            }
-                          }} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: incForm.description ? `linear-gradient(135deg, ${C.red}, ${C.redDark})` : C.gray300, color: C.white, fontSize: 12, fontWeight: 600, cursor: incForm.description ? "pointer" : "default" }}>Log Incident</button>
-                        </div>
-                      </div>
-                    )}
-                    {incidents.length > 0 ? (
-                      <div style={{ borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden", background: C.white }}>
-                        {incidents.slice().reverse().map((inc, i) => {
-                          const typeColors = { near_miss: C.yellow, first_aid: "#F97316", recordable: C.red, lost_time: "#991B1B" };
-                          return (
-                            <div key={i} style={{ padding: 16, borderBottom: i < incidents.length - 1 ? `1px solid ${C.gray100}` : "none" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
-                                <div style={{ display: "flex", gap: 10, flex: 1 }}>
-                                  <span style={{ fontSize: 10, fontWeight: 700, background: typeColors[inc.type] + "20", color: typeColors[inc.type], padding: "3px 8px", borderRadius: 4, textTransform: "uppercase", whiteSpace: "nowrap" }}>{inc.type.replace('_', ' ')}</span>
-                                  <span style={{ fontSize: 12, color: C.gray500 }}>{new Date(inc.date).toLocaleDateString()}</span>
-                                </div>
-                                <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                                  <input type="checkbox" checked={inc.resolved || false} onChange={e => handleProjectUpdate({ safetyIncidents: incidents.map(x => x.id === inc.id ? {...x, resolved: e.target.checked} : x) })} style={{ cursor: "pointer" }} />
-                                  <span style={{ fontSize: 11, color: C.gray500 }}>Resolved</span>
-                                </label>
-                              </div>
-                              <p style={{ fontSize: 12, color: C.navy, margin: "0 0 6px", fontWeight: 500 }}>{inc.description}</p>
-                              {inc.correctiveAction && <p style={{ fontSize: 11, color: C.gray600, margin: 0 }}>Action: {inc.correctiveAction}</p>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div style={{ padding: "40px 20px", textAlign: "center", background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
-                        <p style={{ fontSize: 13, color: C.gray500, fontWeight: 500, margin: 0 }}>No incidents recorded</p>
-                        <p style={{ fontSize: 11, color: C.gray400, margin: "4px 0 0" }}>This project has maintained a safe workplace</p>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+              {activeTab === "safety" && <SafetyTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "email" && (
                 <div>
                   <div style={{ marginBottom: 20 }}>
@@ -6355,6 +6358,66 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
+    function LeadDocumentsTab({ lead, onUpdate, user }) {
+      const [selectedCategory, setSelectedCategory] = useState("Proposal");
+      const fileInputRef = useRef(null);
+      const handleFileUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !firestoreDb || !firebaseStorage) return;
+        try {
+          const docId = generateId();
+          const docPath = `leads/${lead.id}/documents/${Date.now()}_${file.name}`;
+          const docRef = firebaseStorage.ref(docPath);
+          await docRef.put(file);
+          const downloadURL = await docRef.getDownloadURL();
+          const newDoc = { id: docId, name: file.name, url: downloadURL, type: file.type, category: selectedCategory, uploadedAt: new Date().toISOString(), uploadedBy: user.name };
+          onUpdate(lead.id, { documents: [...(lead.documents || []), newDoc] });
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setSelectedCategory("Proposal");
+        } catch (err) { console.error("Upload failed:", err); alert("Failed to upload document"); }
+      };
+      const handleDelete = (docId) => { if (confirm("Delete this document?")) { onUpdate(lead.id, { documents: (lead.documents || []).filter(d => d.id !== docId) }); } };
+      return (
+        <div style={{ display: "grid", gap: 16 }}>
+          <div style={{ padding: "16px", borderRadius: 10, border: `1px solid ${C.gray200}`, background: C.gray50 }}>
+            <h4 style={{ fontSize: 12, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Upload Document</h4>
+            <div style={{ display: "grid", gap: 10 }}>
+              <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)} style={{ padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", background: C.white, cursor: "pointer" }}>
+                <option value="Proposal">Proposal</option>
+                <option value="Photos">Photos</option>
+                <option value="Survey Report">Survey Report</option>
+                <option value="Contract">Contract</option>
+                <option value="Insurance">Insurance</option>
+                <option value="Permit">Permit</option>
+                <option value="Lien Waiver">Lien Waiver</option>
+                <option value="Other">Other</option>
+              </select>
+              <div>
+                <input ref={fileInputRef} type="file" onChange={handleFileUpload} style={{ display: "none" }} />
+                <button onClick={() => fileInputRef.current?.click()} style={{ width: "100%", padding: "10px 14px", border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: "pointer" }}>Choose File</button>
+              </div>
+            </div>
+          </div>
+          {(lead.documents || []).length > 0 ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {(lead.documents || []).map(doc => (
+                <div key={doc.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, background: C.white, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 16 }}>{doc.type?.includes("image") ? "🖼️" : doc.type?.includes("pdf") ? "📄" : "📎"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <button onClick={() => window.open(doc.url, "_blank")} style={{ background: "none", border: "none", color: C.red, fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", textDecoration: "underline" }}>{doc.name}</button>
+                      <div style={{ fontSize: 11, color: C.gray500, marginTop: 2 }}><span style={{ padding: "2px 6px", background: C.gray100, borderRadius: 4, fontSize: 10, fontWeight: 600, marginRight: 6 }}>{doc.category}</span>{new Date(doc.uploadedAt).toLocaleDateString()}</div>
+                    </div>
+                  </div>
+                  <button onClick={() => handleDelete(doc.id)} style={{ padding: "4px 8px", borderRadius: 4, border: "none", background: C.redBg, color: C.red, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                </div>
+              ))}
+            </div>
+          ) : <p style={{ color: C.gray400, fontSize: 12, textAlign: "center", padding: "20px" }}>No documents yet. Upload files to track proposals, contracts, and other project materials.</p>}
+        </div>
+      );
+    }
+
     function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user, crmUsers, onMention, inspections, setInspections }) {
       const { companies, properties, contacts } = entities;
       const co = companies.find(c => c.id === lead.companyId);
@@ -6585,65 +6648,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ marginTop: 4 }}><EmailCompose to={ct?.email || lead.contactEmail || ""} defaultSubject={`Colony Roofers — ${co?.name || lead.company}`} defaultBody={`Hey ${((ct?.name || lead.contactName || "").split(" ")[0]) || "there"},\n\nHope all is well.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`} contacts={contacts} entityType="lead" entityId={lead.id} entityName={leadName(lead)} onSent={(emailData) => { onUpdate(lead.id, { activities: [...(lead.activities || []), { type: "email", text: `Email sent to ${emailData.to}: ${emailData.subject}`, by: user.name, at: new Date().toISOString() }] }); }} /></div></div>}
                 {lead.stage === "awarded" && <div style={{ padding: "16px", borderRadius: 10, border: `2px solid ${C.green}40`, background: C.greenBg + "40" }}><h4 style={{ fontSize: 13, fontWeight: 700, color: C.green, margin: "0 0 6px" }}>Awarded — Moving to Production</h4><p style={{ fontSize: 12, color: C.gray600, margin: "0 0 8px" }}>This project has been awarded and will appear on the Production board.</p></div>}
               </div>)}
-              {activeTab === "documents" && (() => {
-                const [selectedCategory, setSelectedCategory] = React.useState("Proposal");
-                const fileInputRef = React.useRef(null);
-                const handleFileUpload = async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file || !firestoreDb || !storageDb) return;
-                  try {
-                    const docId = generateId();
-                    const docPath = `leads/${lead.id}/documents/${Date.now()}_${file.name}`;
-                    const docRef = storageDb.ref(docPath);
-                    await docRef.put(file);
-                    const downloadURL = await docRef.getDownloadURL();
-                    const newDoc = { id: docId, name: file.name, url: downloadURL, type: file.type, category: selectedCategory, uploadedAt: new Date().toISOString(), uploadedBy: user.name };
-                    onUpdate(lead.id, { documents: [...(lead.documents || []), newDoc] });
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                    setSelectedCategory("Proposal");
-                  } catch (err) { console.error("Upload failed:", err); alert("Failed to upload document"); }
-                };
-                const handleDelete = (docId) => { if (confirm("Delete this document?")) { onUpdate(lead.id, { documents: (lead.documents || []).filter(d => d.id !== docId) }); } };
-                return (
-                  <div style={{ display: "grid", gap: 16 }}>
-                    <div style={{ padding: "16px", borderRadius: 10, border: `1px solid ${C.gray200}`, background: C.gray50 }}>
-                      <h4 style={{ fontSize: 12, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Upload Document</h4>
-                      <div style={{ display: "grid", gap: 10 }}>
-                        <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)} style={{ padding: "8px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", background: C.white, cursor: "pointer" }}>
-                          <option value="Proposal">Proposal</option>
-                          <option value="Photos">Photos</option>
-                          <option value="Survey Report">Survey Report</option>
-                          <option value="Contract">Contract</option>
-                          <option value="Insurance">Insurance</option>
-                          <option value="Permit">Permit</option>
-                          <option value="Lien Waiver">Lien Waiver</option>
-                          <option value="Other">Other</option>
-                        </select>
-                        <div>
-                          <input ref={fileInputRef} type="file" onChange={handleFileUpload} style={{ display: "none" }} />
-                          <button onClick={() => fileInputRef.current?.click()} style={{ width: "100%", padding: "10px 14px", border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: "pointer" }}>Choose File</button>
-                        </div>
-                      </div>
-                    </div>
-                    {(lead.documents || []).length > 0 ? (
-                      <div style={{ display: "grid", gap: 10 }}>
-                        {(lead.documents || []).map(doc => (
-                          <div key={doc.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, background: C.white, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, minWidth: 0 }}>
-                              <span style={{ fontSize: 16 }}>{doc.type?.includes("image") ? "🖼️" : doc.type?.includes("pdf") ? "📄" : "📎"}</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <button onClick={() => window.open(doc.url, "_blank")} style={{ background: "none", border: "none", color: C.red, fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left", textDecoration: "underline" }}>{doc.name}</button>
-                                <div style={{ fontSize: 11, color: C.gray500, marginTop: 2 }}><span style={{ padding: "2px 6px", background: C.gray100, borderRadius: 4, fontSize: 10, fontWeight: 600, marginRight: 6 }}>{doc.category}</span>{new Date(doc.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <button onClick={() => handleDelete(doc.id)} style={{ padding: "4px 8px", borderRadius: 4, border: "none", background: C.redBg, color: C.red, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Delete</button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p style={{ color: C.gray400, fontSize: 12, textAlign: "center", padding: "20px" }}>No documents yet. Upload files to track proposals, contracts, and other project materials.</p>}
-                  </div>
-                );
-              })()}
+              {activeTab === "documents" && <LeadDocumentsTab lead={lead} onUpdate={onUpdate} user={user} />}
             </div>
           </div>
         </div>
