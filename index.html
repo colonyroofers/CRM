@@ -101,16 +101,21 @@
       return { user, loading, error, signIn, signOut };
     }
 
-    // ─── ROLE SYSTEM ───────────────────────────────────────────
-    const ROLES = {
-      admin: { label: "Admin", modules: ["directory", "sales", "estimating", "production", "catalog", "service", "finance", "reports"], color: "#E63946" },
+    // ─── ROLE SYSTEM (dynamic — Firestore-backed with hardcoded fallback) ───
+    const ALL_MODULES = ["directory", "sales", "estimating", "production", "catalog", "service", "finance", "reports"];
+    const MODULE_LABELS = { directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
+    const MODULE_ICONS = { directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
+
+    const ROLE_PRESETS = {
+      admin: { label: "Admin", modules: ALL_MODULES, color: "#E63946" },
       estimator: { label: "Estimator", modules: ["directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
       coordinator: { label: "Coordinator", modules: ["directory", "sales", "production", "service", "reports"], color: "#10B981" },
       superintendent: { label: "Superintendent", modules: ["directory", "production", "service"], color: "#F59E0B" },
     };
+    const ROLE_COLORS = { admin: "#E63946", estimator: "#3B82F6", coordinator: "#10B981", superintendent: "#F59E0B" };
 
-    // Map emails to roles — in production this would be Firestore
-    const ROLE_MAP = {
+    // Hardcoded fallback — used if Firestore user record doesn't exist yet
+    const DEFAULT_ROLE_MAP = {
       "zach@colonyroofers.com": "admin",
       "zachreececpa@gmail.com": "admin",
       "brayleigh@colonyroofers.com": "coordinator",
@@ -119,9 +124,9 @@
       "joseph@colonyroofers.com": "estimator",
       "jgarside@colonyroofers.com": "estimator",
     };
-
-    const getUserRole = (email) => ROLE_MAP[email?.toLowerCase()] || "admin"; // default admin for unknown emails during dev
-    const canAccess = (role, module) => ROLES[role]?.modules.includes(module) || false;
+    const ROLES = ROLE_PRESETS; // backward compat
+    const getUserRole = (email) => DEFAULT_ROLE_MAP[email?.toLowerCase()] || "admin";
+    const canAccess = (role, module) => ROLE_PRESETS[role]?.modules.includes(module) || false;
 
     // ─── SHARED CONSTANTS ──────────────────────────────────────
     const C = {
@@ -2920,10 +2925,12 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const superName = supers.find(s => s.id === project.assignedSuper)?.name || "Unassigned";
       const marginHealth = getMarginHealth(project.estimatedMargin, project.currentMargin);
       const [activeTab, setActiveTab] = useState("overview");
+      const [showEmail, setShowEmail] = useState(false);
       const tabs = [
         { id: "overview", label: "Overview" }, { id: "documents", label: "Documents" },
         { id: "schedule", label: "Schedule" }, { id: "orders", label: "Orders" },
         { id: "logs", label: "Daily Logs" }, { id: "budget", label: "Budget" },
+        { id: "email", label: "📧 Email" },
       ];
       const Sec = ({ title, children }) => <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px" }}>{title}</h4>{children}</div>;
       const Row = ({ label, value, accent }) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 13, color: C.gray500 }}>{label}</span><span style={{ fontSize: 13, fontWeight: 600, color: accent || C.navy }}>{value}</span></div>;
@@ -2994,6 +3001,37 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {activeTab === "orders" && <OrdersTab project={project} onUpdateProject={handleProjectUpdate} supers={supers} />}
               {activeTab === "logs" && <DailyLogsTab project={project} onUpdateProject={handleProjectUpdate} user={user} />}
               {activeTab === "budget" && <BudgetTab project={project} onUpdateProject={handleProjectUpdate} />}
+              {activeTab === "email" && (
+                <div>
+                  <div style={{ marginBottom: 20 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Send Email for {project.name}</h3>
+                    <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Compose an email related to this project. It will open in Gmail and be logged to the project.</p>
+                  </div>
+                  <EmailCompose
+                    defaultSubject={`Colony Roofers — ${project.name}`}
+                    defaultBody={`Hey,\n\nHope all is well. Following up on ${project.name}.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`}
+                    entityType="project" entityId={project.id} entityName={project.name}
+                    onSent={(emailData) => {
+                      handleProjectUpdate({ emailLog: [...(project.emailLog || []), emailData] });
+                    }}
+                  />
+                  {/* Email log */}
+                  {(project.emailLog || []).length > 0 && (
+                    <div style={{ marginTop: 24 }}>
+                      <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px" }}>Email History ({project.emailLog.length})</h4>
+                      {project.emailLog.slice().reverse().map((e, i) => (
+                        <div key={i} style={{ padding: "10px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 6 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{e.subject}</span>
+                            <span style={{ fontSize: 10, color: C.gray400 }}>{new Date(e.sentAt).toLocaleString()}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: C.gray500 }}>To: {e.to}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3640,8 +3678,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleSetAction = (a) => onUpdate(lead.id, { nextAction: a, activities: [...(lead.activities || []), { type: "action", text: `Next: ${a}`, by: user.name, at: new Date().toISOString() }] });
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", justifyContent: "flex-end", background: "rgba(17,29,53,0.5)", backdropFilter: "blur(2px)" }} onClick={onClose}>
-          <div style={{ width: 560, maxWidth: "95vw", background: C.white, height: "100vh", overflow: "auto", boxShadow: "-10px 0 40px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={onClose}>
+          <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
@@ -3763,8 +3801,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const parentCo = (type !== "company" && entity.companyId) ? companies.find(c => c.id === entity.companyId) : null;
 
         return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", justifyContent: "flex-end", background: "rgba(17,29,53,0.5)", backdropFilter: "blur(2px)" }} onClick={() => setSelected(null)}>
-            <div style={{ width: 560, maxWidth: "95vw", background: C.white, height: "100vh", overflow: "auto", boxShadow: "-10px 0 40px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={() => setSelected(null)}>
+            <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
               <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <button onClick={() => setSelected(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
@@ -4101,16 +4139,34 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const handleAddNote = () => { if (!newNote.trim()) return; onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "note", text: newNote.trim(), by: user.name, at: new Date().toISOString() }] }); setNewNote(""); };
 
       return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", justifyContent: "flex-end", background: "rgba(17,29,53,0.5)", backdropFilter: "blur(2px)" }} onClick={onClose}>
-          <div style={{ width: 580, maxWidth: "95vw", background: C.white, height: "100vh", overflow: "auto", boxShadow: "-10px 0 40px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
-            <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button><button onClick={() => onDelete(ticket.id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Delete</button></div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 6px" }}>{ticket.subject}</h2>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: pc + "30", color: pc }}>{ticket.priority}</span><span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: sc + "30", color: sc }}>{ticket.status}</span><span style={{ fontSize: 11, opacity: 0.7 }}>{ticket.type}</span></div>
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }}>
+          {/* Full-width header */}
+          <div style={{ padding: "16px 32px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, flexShrink: 0 }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+                <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, marginTop: 2 }}>← Back</button>
+                <div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 6 }}><span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: pc + "30", color: pc }}>{ticket.priority}</span><span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: sc + "30", color: sc }}>{ticket.status}</span></div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 2px" }}>{ticket.subject}</h2>
+                  <p style={{ fontSize: 13, opacity: 0.7, margin: 0 }}>{company?.name || "—"} · {property?.name || "—"} · {ticket.type}</p>
+                </div>
+              </div>
+              <button onClick={() => onDelete(ticket.id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>Delete</button>
             </div>
-            <div style={{ padding: "10px 24px", borderBottom: `1px solid ${C.gray200}`, display: "flex", gap: 3, overflowX: "auto" }}>{TICKET_STATUSES.map(s => <button key={s} onClick={() => handleStatusChange(s)} style={{ padding: "5px 10px", borderRadius: 5, border: ticket.status === s ? `2px solid ${TSTATUS_COLORS[s]}` : `1px solid ${C.gray200}`, background: ticket.status === s ? (TSTATUS_COLORS[s]) + "15" : C.white, color: ticket.status === s ? TSTATUS_COLORS[s] : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s}</button>)}</div>
-            <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}` }}>{[{ id: "details", label: "Details" }, { id: "activity", label: "Activity" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}` }}>{t.label}</button>)}</div>
-            <div style={{ padding: "20px 24px" }}>
+          </div>
+          {/* Status bar */}
+          <div style={{ background: C.white, borderBottom: `1px solid ${C.gray200}`, flexShrink: 0 }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "10px 32px", display: "flex", gap: 3, overflowX: "auto" }}>{TICKET_STATUSES.map(s => <button key={s} onClick={() => handleStatusChange(s)} style={{ padding: "5px 10px", borderRadius: 5, border: ticket.status === s ? `2px solid ${TSTATUS_COLORS[s]}` : `1px solid ${C.gray200}`, background: ticket.status === s ? (TSTATUS_COLORS[s]) + "15" : C.white, color: ticket.status === s ? TSTATUS_COLORS[s] : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s}</button>)}</div>
+          </div>
+          {/* Tabs */}
+          <div style={{ background: C.white, borderBottom: `1px solid ${C.gray200}`, flexShrink: 0 }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px", display: "flex", gap: 0 }}>
+              {[{ id: "details", label: "Details" }, { id: "activity", label: "Activity" }, { id: "email", label: "📧 Email" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "12px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}` }}>{t.label}</button>)}
+            </div>
+          </div>
+          {/* Content */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 32px" }}>
               {activeTab === "details" && <div style={{ display: "grid", gap: 16 }}>
                 <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Linked Records</h4>
                   {company && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4 }}>🏢 <span style={{ fontWeight: 700, color: C.navy }}>{company.name}</span></div>}
@@ -4119,12 +4175,24 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 </div>
                 <div>{[["Type", ticket.type], ["Priority", ticket.priority], ["Assigned", ticket.assignedTo || "Unassigned"], ["Created", new Date(ticket.createdAt).toLocaleString()], ["By", ticket.createdBy]].map(([l, v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>{l}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{v}</span></div>)}</div>
                 {ticket.description && <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{ticket.description}</div>}
-                {/* Email from ticket */}
-                {contact?.email && <div style={{ marginTop: 8 }}><button onClick={() => { const gmailUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}&su=${encodeURIComponent(`Colony Roofers — Service: ${ticket.subject}`)}&body=${encodeURIComponent(`Hey ${(contact.name || "").split(" ")[0]},\n\nHope all is well.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`)}`; window.open(gmailUrl, "_blank"); onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "email", text: `Email sent to ${contact.email} re: ${ticket.subject}`, by: user.name, at: new Date().toISOString() }] }); }} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>📧 Email {contact.name}</button></div>}
               </div>}
               {activeTab === "activity" && <div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note..." style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} /><button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button></div>
-                {(ticket.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", status: "📋", note: "📝" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
+                {(ticket.activities || []).slice().reverse().map((a, i) => <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 14 }}>{{ created: "🆕", status: "📋", note: "📝", email: "📧" }[a.type] || "📌"}</span><div><div style={{ fontSize: 12, color: C.navy }}>{a.text}</div><div style={{ fontSize: 10, color: C.gray400 }}>{a.by} · {new Date(a.at).toLocaleString()}</div></div></div>)}
+              </div>}
+              {activeTab === "email" && <div>
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Send Email for: {ticket.subject}</h3>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Email will be logged to this ticket's activity.</p>
+                </div>
+                <EmailCompose
+                  to={contact?.email || ""}
+                  defaultSubject={`Colony Roofers — Service: ${ticket.subject}`}
+                  defaultBody={`Hey ${(contact?.name || "").split(" ")[0] || "there"},\n\nHope all is well. Following up regarding ${ticket.subject} at ${property?.name || "the property"}.\n\n\n\nZach Reece, Owner\nColony Roofers\n404-806-0956`}
+                  onSent={(emailData) => {
+                    onUpdate(ticket.id, { activities: [...(ticket.activities || []), { type: "email", text: `Email sent to ${emailData.to} — "${emailData.subject}"`, by: user.name, at: new Date().toISOString() }] });
+                  }}
+                />
               </div>}
             </div>
           </div>
@@ -4524,13 +4592,277 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
 
 
     // ============================================================
-    // MAIN APP SHELL
+    // ============================================================
+    // MODULE: USER MANAGEMENT (Admin-only)
+    // ============================================================
+    function UserManagementModule({ user, role, crmUsers, setCrmUsers }) {
+      const [search, setSearch] = useState("");
+      const [showInvite, setShowInvite] = useState(false);
+      const [editUser, setEditUser] = useState(null);
+
+      const filtered = crmUsers.filter(u => !search || u.name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase()));
+      const activeCount = crmUsers.filter(u => u.active !== false).length;
+
+      // Build teams list from user data
+      const teams = [...new Set(crmUsers.map(u => u.team).filter(Boolean))];
+
+      const handleUpdateUser = (userId, updates) => {
+        setCrmUsers(prev => prev.map(u => u.id === userId ? { ...u, ...updates } : u));
+        setEditUser(null);
+      };
+
+      const handleInvite = (data) => {
+        const newUser = { ...data, id: generateId(), active: true, createdAt: new Date().toISOString() };
+        setCrmUsers(prev => [...prev, newUser]);
+        setShowInvite(false);
+      };
+
+      const handleDeactivate = (userId) => {
+        if (!confirm("Deactivate this user? They will lose access.")) return;
+        setCrmUsers(prev => prev.map(u => u.id === userId ? { ...u, active: false } : u));
+        setEditUser(null);
+      };
+
+      const handleReactivate = (userId) => {
+        setCrmUsers(prev => prev.map(u => u.id === userId ? { ...u, active: true } : u));
+      };
+
+      const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
+      const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
+
+      // ── Edit User Panel ──
+      const EditUserPanel = () => {
+        if (!editUser) return null;
+        const u = crmUsers.find(x => x.id === editUser);
+        if (!u) return null;
+        const [form, setForm] = useState({ ...u, modules: u.modules || ROLE_PRESETS[u.role]?.modules || ALL_MODULES });
+
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: C.gray50, display: "flex", flexDirection: "column" }} onClick={() => setEditUser(null)}>
+            <div style={{ width: "100%", background: C.white, flex: 1, overflow: "auto" }} onClick={e => e.stopPropagation()}>
+              <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                  <button onClick={() => setEditUser(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
+                  {u.active !== false ? (
+                    <button onClick={() => handleDeactivate(u.id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Deactivate</button>
+                  ) : (
+                    <button onClick={() => handleReactivate(u.id)} style={{ background: "rgba(16,185,129,0.3)", border: "none", cursor: "pointer", color: "#6EE7B7", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Reactivate</button>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>{(u.name || "?")[0]}</div>
+                  <div><h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{u.name}</h2><p style={{ fontSize: 12, opacity: 0.7, margin: "2px 0 0" }}>{u.email}</p></div>
+                </div>
+              </div>
+              <div style={{ padding: "20px 24px", display: "grid", gap: 16 }}>
+                {/* Basic info */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Name</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+                  <div><label style={ls}>Email</label><input style={fs} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+                </div>
+
+                {/* Role */}
+                <div>
+                  <label style={ls}>Role</label>
+                  <select style={fs} value={form.role} onChange={e => {
+                    const newRole = e.target.value;
+                    setForm(f => ({ ...f, role: newRole, modules: ROLE_PRESETS[newRole]?.modules || f.modules }));
+                  }}>
+                    {Object.entries(ROLE_PRESETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                  <p style={{ fontSize: 10, color: C.gray400, margin: "4px 0 0" }}>Changing role resets modules to that role's defaults. Customize below.</p>
+                </div>
+
+                {/* Team */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label style={ls}>Team</label>
+                    <input style={fs} value={form.team || ""} onChange={e => setForm(f => ({ ...f, team: e.target.value }))} placeholder="e.g. Atlanta Crew" list="team-list" />
+                    <datalist id="team-list">{teams.map(t => <option key={t} value={t} />)}</datalist>
+                  </div>
+                  <div>
+                    <label style={ls}>Manager</label>
+                    <select style={fs} value={form.managerId || ""} onChange={e => setForm(f => ({ ...f, managerId: e.target.value }))}>
+                      <option value="">— None —</option>
+                      {crmUsers.filter(x => x.id !== u.id && x.active !== false).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Markets */}
+                <div>
+                  <label style={ls}>Markets</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {MARKETS.map(m => (
+                      <label key={m} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: C.navy, cursor: "pointer" }}>
+                        <input type="checkbox" checked={(form.markets || MARKETS).includes(m)} onChange={e => {
+                          const current = form.markets || [...MARKETS];
+                          setForm(f => ({ ...f, markets: e.target.checked ? [...current, m] : current.filter(x => x !== m) }));
+                        }} />
+                        {MARKET_LABELS[m]}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Module Access */}
+                <div>
+                  <label style={{ ...ls, marginBottom: 8 }}>Module Access</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                    {ALL_MODULES.map(m => (
+                      <label key={m} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 6, border: `1px solid ${form.modules.includes(m) ? C.green + "60" : C.gray200}`, background: form.modules.includes(m) ? C.greenBg + "40" : C.white, cursor: "pointer", fontSize: 12 }}>
+                        <input type="checkbox" checked={form.modules.includes(m)} onChange={e => {
+                          setForm(f => ({ ...f, modules: e.target.checked ? [...f.modules, m] : f.modules.filter(x => x !== m) }));
+                        }} />
+                        <span>{MODULE_ICONS[m]}</span>
+                        <span style={{ fontWeight: 600, color: form.modules.includes(m) ? C.navy : C.gray500 }}>{MODULE_LABELS[m]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Visibility */}
+                <div>
+                  <label style={ls}>Data Visibility</label>
+                  <select style={fs} value={form.visibility || "all"} onChange={e => setForm(f => ({ ...f, visibility: e.target.value }))}>
+                    <option value="all">See all data across the platform</option>
+                    <option value="team">Only see their team's data</option>
+                    <option value="assigned">Only see data assigned to them</option>
+                  </select>
+                </div>
+
+                <button onClick={() => handleUpdateUser(u.id, form)} style={{ padding: "12px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Save Changes</button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // ── Invite User Modal ──
+      const InviteModal = () => {
+        const [form, setForm] = useState({ name: "", email: "", role: "estimator", team: "", modules: ROLE_PRESETS.estimator.modules, markets: [...MARKETS], visibility: "all" });
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }} onClick={() => setShowInvite(false)}>
+            <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "85vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+              <div style={{ padding: "24px 28px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>Add Team Member</h2>
+                <button onClick={() => setShowInvite(false)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400 }}>{I.x}</button>
+              </div>
+              <div style={{ padding: "20px 28px 28px", display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Name *</label><input style={fs} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+                  <div><label style={ls}>Email * (Google account)</label><input style={fs} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div><label style={ls}>Role</label><select style={fs} value={form.role} onChange={e => { const r = e.target.value; setForm(f => ({ ...f, role: r, modules: ROLE_PRESETS[r]?.modules || f.modules })); }}>{Object.entries(ROLE_PRESETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
+                  <div><label style={ls}>Team</label><input style={fs} value={form.team} onChange={e => setForm(f => ({ ...f, team: e.target.value }))} placeholder="e.g. Tampa Crew" list="team-list-invite" /><datalist id="team-list-invite">{teams.map(t => <option key={t} value={t} />)}</datalist></div>
+                </div>
+                <div><label style={{ ...ls, marginBottom: 8 }}>Module Access</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                    {ALL_MODULES.map(m => (
+                      <label key={m} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 6px", cursor: "pointer" }}>
+                        <input type="checkbox" checked={form.modules.includes(m)} onChange={e => setForm(f => ({ ...f, modules: e.target.checked ? [...f.modules, m] : f.modules.filter(x => x !== m) }))} />
+                        {MODULE_ICONS[m]} {MODULE_LABELS[m]}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div><label style={ls}>Visibility</label><select style={fs} value={form.visibility} onChange={e => setForm(f => ({ ...f, visibility: e.target.value }))}><option value="all">All data</option><option value="team">Team only</option><option value="assigned">Assigned only</option></select></div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button onClick={() => setShowInvite(false)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                  <button onClick={() => { if (form.name && form.email) handleInvite(form); }} disabled={!form.name || !form.email} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: form.name && form.email ? C.green : C.gray200, color: form.name && form.email ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: form.name && form.email ? "pointer" : "default" }}>Add Member</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
+          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px 32px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+              <div><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>User Management</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Control who can access what — modules, data, and teams</p></div>
+              <button onClick={() => setShowInvite(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: `0 4px 12px ${C.red}30` }}>{I.plus} Add Member</button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+              <StatCard label="Active Users" value={activeCount} icon={I.user} accent={C.green} />
+              <StatCard label="Teams" value={teams.length || 1} icon={I.layers} accent={C.blue} />
+              <StatCard label="Total Users" value={crmUsers.length} icon={I.building} accent={C.navy} />
+            </div>
+
+            <div style={{ position: "relative", marginBottom: 16 }}>
+              <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.gray400 }}>{I.search}</span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users..." style={{ width: "100%", padding: "10px 10px 10px 34px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", background: C.white, boxSizing: "border-box" }} />
+            </div>
+
+            <div style={{ borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden", background: C.white }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.gray50 }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>User</th>
+                  <th style={{ padding: "10px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Role</th>
+                  <th style={{ padding: "10px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Team</th>
+                  <th style={{ padding: "10px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Modules</th>
+                  <th style={{ padding: "10px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Visibility</th>
+                  <th style={{ padding: "10px 8px", textAlign: "center", fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Status</th>
+                </tr></thead>
+                <tbody>{filtered.map(u => {
+                  const rc = ROLE_COLORS[u.role] || C.gray500;
+                  return (
+                    <tr key={u.id} onClick={() => setEditUser(u.id)} style={{ cursor: "pointer", borderTop: `1px solid ${C.gray100}`, opacity: u.active === false ? 0.5 : 1 }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: 8, background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{(u.name || "?")[0]}</div>
+                          <div><div style={{ fontWeight: 700, color: C.navy }}>{u.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{u.email}</div></div>
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 8px" }}><span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: rc + "18", color: rc }}>{ROLE_PRESETS[u.role]?.label || u.role}</span></td>
+                      <td style={{ padding: "10px 8px", color: C.gray600, fontSize: 11 }}>{u.team || "—"}</td>
+                      <td style={{ padding: "10px 8px" }}>
+                        <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                          {(u.modules || ROLE_PRESETS[u.role]?.modules || []).slice(0, 4).map(m => <span key={m} style={{ fontSize: 12 }} title={MODULE_LABELS[m]}>{MODULE_ICONS[m]}</span>)}
+                          {(u.modules || ROLE_PRESETS[u.role]?.modules || []).length > 4 && <span style={{ fontSize: 10, color: C.gray400 }}>+{(u.modules || ROLE_PRESETS[u.role]?.modules || []).length - 4}</span>}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 8px", color: C.gray600, fontSize: 11 }}>{{ all: "All data", team: "Team only", assigned: "Assigned only" }[u.visibility] || "All data"}</td>
+                      <td style={{ padding: "10px 8px", textAlign: "center" }}>{u.active === false ? <span style={{ padding: "2px 8px", borderRadius: 8, background: C.redBg, color: C.red, fontSize: 10, fontWeight: 700 }}>Inactive</span> : <span style={{ padding: "2px 8px", borderRadius: 8, background: C.greenBg, color: C.green, fontSize: 10, fontWeight: 700 }}>Active</span>}</td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+              {filtered.length === 0 && <div style={{ padding: 32, textAlign: "center", color: C.gray400, fontSize: 12 }}>No users found</div>}
+            </div>
+
+            {/* Role presets reference */}
+            <div style={{ marginTop: 24, padding: "16px 20px", borderRadius: 10, background: C.white, border: `1px solid ${C.gray200}` }}>
+              <h4 style={{ fontSize: 12, fontWeight: 700, color: C.navy, margin: "0 0 10px" }}>Role Presets</h4>
+              <p style={{ fontSize: 11, color: C.gray400, margin: "0 0 12px" }}>When you set a role, it applies default modules. You can customize per user after.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                {Object.entries(ROLE_PRESETS).map(([k, v]) => (
+                  <div key={k} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${v.color}30`, background: v.color + "08" }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: v.color, marginBottom: 4 }}>{v.label}</div>
+                    <div style={{ fontSize: 10, color: C.gray500 }}>{v.modules.map(m => MODULE_LABELS[m]).join(", ")}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {showInvite && <InviteModal />}
+          <EditUserPanel />
+        </div>
+      );
+    }
+
+    // ============================================================
+    // MAIN APP SHELL (with dynamic user permissions)
     // ============================================================
     function App() {
       const { user, loading, error, signIn, signOut } = useFirebaseAuth();
       const [activeModule, setActiveModule] = useState(null);
 
-      // ── SHARED ENTITY STORES (platform-wide) ─────────────────
+      // ── SHARED ENTITY STORES ─────────────────────────────────
       const [companiesData, saveCompanies] = useFirestoreCollection("cr_companies", []);
       const companiesRef = useRef(companiesData); companiesRef.current = companiesData;
       const setCompanies = useCallback(u => { const n = typeof u === "function" ? u(companiesRef.current) : u; saveCompanies(n); }, [saveCompanies]);
@@ -4543,7 +4875,6 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const contactsRef = useRef(contactsData); contactsRef.current = contactsData;
       const setContacts = useCallback(u => { const n = typeof u === "function" ? u(contactsRef.current) : u; saveContacts(n); }, [saveContacts]);
 
-      // Sales + Service data (needed for Directory + Reports + AI Agent cross-referencing)
       const [salesLeadsData, saveSalesLeads] = useFirestoreCollection("cr_sales_leads", []);
       const salesLeadsRef = useRef(salesLeadsData); salesLeadsRef.current = salesLeadsData;
       const setSalesLeads = useCallback(u => { const n = typeof u === "function" ? u(salesLeadsRef.current) : u; saveSalesLeads(n); }, [saveSalesLeads]);
@@ -4554,14 +4885,49 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const setServiceTickets = useCallback(u => { const n = typeof u === "function" ? u(serviceTicketsRef.current) : u; saveServiceTickets(n); }, [saveServiceTickets]);
       const serviceTickets = serviceTicketsData;
 
+      // ── CRM USERS (dynamic permissions) ──────────────────────
+      const DEFAULT_CRM_USERS = [
+        { id: "u1", name: "Zach Reece", email: "zach@colonyroofers.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+        { id: "u1b", name: "Zach Reece", email: "zachreececpa@gmail.com", role: "admin", modules: ALL_MODULES, team: "Leadership", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+        { id: "u2", name: "Brayleigh Gardner", email: "brayleigh@colonyroofers.com", role: "coordinator", modules: ROLE_PRESETS.coordinator.modules, team: "Operations", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+        { id: "u3", name: "Lucio Martinez", email: "lucio@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Tampa Crew", markets: ["TPA"], visibility: "team", active: true },
+        { id: "u4", name: "Derrick Newsome", email: "derrick@colonyroofers.com", role: "superintendent", modules: ROLE_PRESETS.superintendent.modules, team: "Atlanta Crew", markets: ["ATL"], visibility: "team", active: true },
+        { id: "u5", name: "Joseph", email: "joseph@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+        { id: "u6", name: "J. Garside", email: "jgarside@colonyroofers.com", role: "estimator", modules: ROLE_PRESETS.estimator.modules, team: "Estimating", markets: ["ATL", "TPA", "DFW"], visibility: "all", active: true },
+      ];
+      const [crmUsersData, saveCrmUsers] = useFirestoreCollection("cr_crm_users", DEFAULT_CRM_USERS);
+      const crmUsersRef = useRef(crmUsersData); crmUsersRef.current = crmUsersData;
+      const setCrmUsers = useCallback(u => { const n = typeof u === "function" ? u(crmUsersRef.current) : u; saveCrmUsers(n); }, [saveCrmUsers]);
+      const crmUsers = crmUsersData;
+
       const sharedEntities = { companies: companiesData, properties: propertiesData, contacts: contactsData, setCompanies, setProperties, setContacts };
 
       if (loading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navyLight})` }}><Spinner size={24} color="rgba(255,255,255,0.5)" /></div>;
       if (!user) return <LoginScreen onSignIn={signIn} loading={loading} error={error} />;
 
-      const role = getUserRole(user.email);
-      const allowedModules = ROLES[role]?.modules || [];
-      const currentModule = activeModule && allowedModules.includes(activeModule) ? activeModule : allowedModules[0] || "production";
+      // ── Resolve current user's permissions ───────────────────
+      const crmUser = crmUsers.find(u => u.email?.toLowerCase() === user.email?.toLowerCase());
+      const role = crmUser?.role || getUserRole(user.email);
+      const userModules = crmUser?.modules || ROLE_PRESETS[role]?.modules || ALL_MODULES;
+      const isAdmin = role === "admin";
+
+      // Admin always gets user management
+      const allowedModules = isAdmin ? [...new Set([...userModules, "users"])] : userModules;
+      const currentModule = activeModule && allowedModules.includes(activeModule) ? activeModule : allowedModules[0] || "directory";
+
+      // Check if user is active
+      if (crmUser && crmUser.active === false) {
+        return (
+          <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navyLight})` }}>
+            <div style={{ background: C.white, borderRadius: 16, padding: "40px", textAlign: "center", maxWidth: 420 }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🚫</div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Account Deactivated</h2>
+              <p style={{ fontSize: 14, color: C.gray500, margin: "0 0 20px" }}>Your access to Colony Roofers CRM has been deactivated. Contact your admin for assistance.</p>
+              <button onClick={signOut} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Sign Out</button>
+            </div>
+          </div>
+        );
+      }
 
       const modules = [
         { key: "directory", label: "Directory", icon: "📇" },
@@ -4572,7 +4938,10 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
         { key: "service", label: "Service", icon: "🔧" },
         { key: "finance", label: "Finance", icon: "💰" },
         { key: "reports", label: "Reports", icon: "📊" },
+        { key: "users", label: "Users", icon: "👥" },
       ].filter(m => allowedModules.includes(m.key));
+
+      const roleColor = ROLE_COLORS[role] || C.gray500;
 
       return (
         <div style={{ minHeight: "100vh", background: C.gray50 }}>
@@ -4582,12 +4951,12 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: C.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.white }}>CR</div>
                 <div><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
               </div>
-              <div style={{ display: "flex", gap: 2, marginLeft: 16 }}>
-                {modules.map(m => <button key={m.key} onClick={() => setActiveModule(m.key)} style={{ padding: "8px 18px", border: "none", borderRadius: "6px 6px 0 0", background: currentModule === m.key ? "rgba(255,255,255,0.15)" : "transparent", color: currentModule === m.key ? C.white : "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, borderBottom: currentModule === m.key ? `2px solid ${C.red}` : "2px solid transparent" }}><span style={{ fontSize: 14 }}>{m.icon}</span> {m.label}</button>)}
+              <div style={{ display: "flex", gap: 2, marginLeft: 16, overflowX: "auto" }}>
+                {modules.map(m => <button key={m.key} onClick={() => setActiveModule(m.key)} style={{ padding: "8px 14px", border: "none", borderRadius: "6px 6px 0 0", background: currentModule === m.key ? "rgba(255,255,255,0.15)" : "transparent", color: currentModule === m.key ? C.white : "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, borderBottom: currentModule === m.key ? `2px solid ${C.red}` : "2px solid transparent", whiteSpace: "nowrap" }}><span style={{ fontSize: 13 }}>{m.icon}</span> {m.label}</button>)}
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: ROLES[role]?.color + "30", color: ROLES[role]?.color || C.white, letterSpacing: "0.05em" }}>{ROLES[role]?.label || role}</span>
+              <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: roleColor + "30", color: roleColor, letterSpacing: "0.05em" }}>{ROLE_PRESETS[role]?.label || role}</span>
               {user.picture ? <img src={user.picture} alt="" style={{ width: 28, height: 28, borderRadius: 14, border: "2px solid rgba(255,255,255,0.3)" }} referrerPolicy="no-referrer" /> : <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.white, fontWeight: 700 }}>{(user.name || "?")[0]}</div>}
               <div style={{ color: C.white, lineHeight: 1.2 }}><div style={{ fontSize: 12, fontWeight: 600 }}>{user.name}</div><button onClick={signOut} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 10, cursor: "pointer", padding: 0 }}>Sign Out</button></div>
             </div>
@@ -4600,8 +4969,8 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
           {currentModule === "finance" && <FinanceModule user={user} role={role} />}
           {currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
           {currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
+          {currentModule === "users" && <UserManagementModule user={user} role={role} crmUsers={crmUsers} setCrmUsers={setCrmUsers} />}
 
-          {/* Platform-wide AI Agent */}
           <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} currentModule={currentModule} />
         </div>
       );
