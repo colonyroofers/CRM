@@ -720,7 +720,7 @@
         const key = `cr_emails_${entityType}_${entityId}`;
         firestoreDb.collection("cr_email_threads").doc(key).get().then(doc => {
           if (doc.exists) setThread(doc.data().messages || []);
-        }).catch(() => {});
+        }).catch(err => { console.warn("Email thread load error:", err.message); });
       }, [entityType, entityId]);
 
       const allContacts = contacts || [];
@@ -766,7 +766,7 @@
         setThread(newThread);
         if (entityType && entityId && firestoreDb) {
           const key = `cr_emails_${entityType}_${entityId}`;
-          firestoreDb.collection("cr_email_threads").doc(key).set({ messages: newThread, updatedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
+          firestoreDb.collection("cr_email_threads").doc(key).set({ messages: newThread, updatedAt: new Date().toISOString() }, { merge: true }).catch(err => { console.error("Email thread save error:", err.message); });
         }
       };
 
@@ -4642,7 +4642,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       useEffect(() => {
         if (!firestoreDb) {
           // Fallback to localStorage if Firestore not ready
-          try { const s = localStorage.getItem(collectionName); if (s) setData(JSON.parse(s)); } catch(e) {}
+          try { const s = localStorage.getItem(collectionName); if (s) setData(JSON.parse(s)); } catch(e) { console.warn("Storage/parse error:", e.message); }
           setLoaded(true);
           return;
         }
@@ -4656,7 +4656,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         }, err => {
           console.error(`Firestore ${collectionName} listen error:`, err);
           // Fallback to localStorage
-          try { const s = localStorage.getItem(collectionName); if (s) setData(JSON.parse(s)); } catch(e) {}
+          try { const s = localStorage.getItem(collectionName); if (s) setData(JSON.parse(s)); } catch(e) { console.warn("Storage/parse error:", e.message); }
           setLoaded(true);
         });
         return () => unsub();
@@ -4666,7 +4666,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         setData(newData);
         const toStore = stripFn ? stripFn(newData) : newData;
         // Always save to localStorage as backup
-        try { localStorage.setItem(collectionName, JSON.stringify(toStore)); } catch(e) {}
+        try { localStorage.setItem(collectionName, JSON.stringify(toStore)); } catch(e) { console.warn("Storage/parse error:", e.message); }
         // Save to Firestore
         if (firestoreDb) {
           skipNextSync.current = true;
@@ -4686,14 +4686,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
       catch(e) { return INITIAL_PROJECTS; }
     };
     const saveProjects = (projects) => {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stripDocsForStorage(projects))); } catch(e) {}
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stripDocsForStorage(projects))); } catch(e) { console.warn("Storage/parse error:", e.message); }
     };
     const loadUsers = () => {
       try { const s = localStorage.getItem(USERS_STORAGE_KEY); return s ? JSON.parse(s) : USERS.map(u => ({ ...u })); }
       catch(e) { return USERS.map(u => ({ ...u })); }
     };
     const saveUsers = (users) => {
-      try { localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users)); } catch(e) {}
+      try { localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users)); } catch(e) { console.warn("Storage/parse error:", e.message); }
     };
 
 
@@ -7756,7 +7756,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         try {
           const stored = localStorage.getItem("cr_production_projects");
           if (stored) setProjectsData(JSON.parse(stored));
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
       }, []);
 
       const co = (id) => companies.find(c => c.id === id);
@@ -8136,7 +8136,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             const arr = JSON.parse(localStorage.getItem(key) || "[]");
             const source = key.replace("cr_tasks_", "");
             arr.forEach(t => tasks.push({ ...t, _source: source, _key: key }));
-          } catch(e) {}
+          } catch(e) { console.warn("Storage/parse error:", e.message); }
         });
         setAllTasks(tasks);
       }, [refreshKey]);
@@ -8208,7 +8208,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           const updated = existing.map(t => t.id === task.id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t);
           localStorage.setItem(task._key, JSON.stringify(updated));
           if (firestoreDb) firestoreDb.collection("kv").doc(task._key).set({ value: JSON.stringify(updated) });
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
         setRefreshKey(k => k + 1);
       };
 
@@ -8219,7 +8219,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           const updated = existing.filter(t => t.id !== task.id);
           localStorage.setItem(task._key, JSON.stringify(updated));
           if (firestoreDb) firestoreDb.collection("kv").doc(task._key).set({ value: JSON.stringify(updated) });
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
         setRefreshKey(k => k + 1);
       };
 
@@ -8230,7 +8230,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           const updated = existing.map(t => t.id === task.id ? { ...t, title: editTitle.trim(), dueDate: editDue || null, assignee: editAssignee } : t);
           localStorage.setItem(task._key, JSON.stringify(updated));
           if (firestoreDb) firestoreDb.collection("kv").doc(task._key).set({ value: JSON.stringify(updated) });
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
         setEditingId(null);
         setRefreshKey(k => k + 1);
       };
@@ -8244,7 +8244,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           const existing = JSON.parse(localStorage.getItem(collKey) || "[]");
           localStorage.setItem(collKey, JSON.stringify([...existing, taskObj]));
           if (firestoreDb) firestoreDb.collection("kv").doc(collKey).set({ value: JSON.stringify([...existing, taskObj]) });
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
         setNewTask(""); setNewDue(""); setNewAssignee(user?.name || ""); setNewObjType(""); setNewObjId("");
         setRefreshKey(k => k + 1);
       };
@@ -8420,7 +8420,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           tasks.filter(t => !t.completed && (t.assignee === user.name || t.createdBy === user.name)).forEach(t => {
             myTasks.push({ ...t, source: key.replace("cr_tasks_", "") });
           });
-        } catch(e) {}
+        } catch(e) { console.warn("Storage/parse error:", e.message); }
       });
       // Also check Firestore collections
       const [firestoreTasks, setFirestoreTasks] = useState([]);
@@ -8905,10 +8905,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
     function DonutChart({ data, size = 180, label = "" }) {
       const canvasRef = useRef(null);
       useEffect(() => {
-        const ctx = canvasRef.current?.getContext("2d");
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, size, size);
-        const total = data.reduce((s, d) => s + d.value, 0) || 1;
+        if (!data || !Array.isArray(data) || data.length === 0) return;
+        const total = data.reduce((s, d) => s + (d.value || 0), 0) || 1;
         const cx = size / 2, cy = size / 2, r = size / 2 - 10, innerR = r * 0.6;
         let angle = -Math.PI / 2;
         data.forEach(d => {
