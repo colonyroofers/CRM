@@ -108,10 +108,10 @@
 
     const ROLE_PRESETS = {
       admin: { label: "Admin", modules: ALL_MODULES, color: "#E63946" },
-      estimator: { label: "Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
-      lead_estimator: { label: "Lead Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
-      coordinator: { label: "Coordinator", modules: ["daily_digest", "directory", "sales", "production", "inspections", "service", "reports"], color: "#10B981" },
-      superintendent: { label: "Superintendent", modules: ["daily_digest", "directory", "production", "inspections", "service"], color: "#F59E0B" },
+      estimator: { label: "Estimator", modules: ["daily_digest", "tasks", "directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
+      lead_estimator: { label: "Lead Estimator", modules: ["daily_digest", "tasks", "directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
+      coordinator: { label: "Coordinator", modules: ["daily_digest", "tasks", "directory", "sales", "production", "inspections", "service", "reports"], color: "#10B981" },
+      superintendent: { label: "Superintendent", modules: ["daily_digest", "tasks", "directory", "production", "inspections", "service"], color: "#F59E0B" },
     };
     const ROLE_COLORS = { admin: "#E63946", estimator: "#3B82F6", lead_estimator: "#2563EB", coordinator: "#10B981", superintendent: "#F59E0B" };
 
@@ -3685,7 +3685,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
           if (skipNextSync.current) { skipNextSync.current = false; return; }
           if (snap.exists) {
             const items = snap.data().items;
-            if (items) setData(items);
+            if (items) {
+              setData(items);
+              // Sync Firestore data to localStorage so DailyDigest and TaskManager pick it up
+              try { localStorage.setItem(collectionName, JSON.stringify(items)); } catch(e) {}
+            }
           }
           setLoaded(true);
         }, err => {
