@@ -393,6 +393,7 @@
       const roofRInputRef = useRef(null);
       const [showAwardPicker, setShowAwardPicker] = useState(null);
       const [filter, setFilter] = useState("all");
+      const [trackerSort, setTrackerSort] = useState("date");
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
       const refresh = async () => { setLoading(true); const s = await loadAllSubmissions(); setSubmissions(s); setLoading(false); };
@@ -562,6 +563,46 @@
                 </div>
               </div>
 
+              {/* Bid Due Date Tracker */}
+              {estimatingJobs.length > 0 && (() => {
+                const sortedJobs = [...estimatingJobs].sort((a, b) => {
+                  if (trackerSort === "estimator") return (a.estimator || "zzz").localeCompare(b.estimator || "zzz");
+                  return (a.bidDueDate || "9999").localeCompare(b.bidDueDate || "9999");
+                });
+                const today = new Date().toISOString().split("T")[0];
+                return (
+                  <div style={{ marginBottom: 20, background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>📅 Bid Due Dates</span>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={() => setTrackerSort("date")} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: trackerSort === "date" ? C.navy : C.gray100, color: trackerSort === "date" ? C.white : C.gray600, fontSize: 10, fontWeight: 600, cursor: "pointer" }}>By Date</button>
+                        <button onClick={() => setTrackerSort("estimator")} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: trackerSort === "estimator" ? C.navy : C.gray100, color: trackerSort === "estimator" ? C.white : C.gray600, fontSize: 10, fontWeight: 600, cursor: "pointer" }}>By Estimator</button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 0 }}>
+                      {sortedJobs.map(job => {
+                        const co = (companies || []).find(c => c.id === job.companyId);
+                        const isOverdue = job.bidDueDate && job.bidDueDate < today;
+                        const isDueSoon = job.bidDueDate && !isOverdue && job.bidDueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0];
+                        return (
+                          <div key={job.id} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, borderRight: `1px solid ${C.gray100}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{job.jobName || co?.name || "—"}</div>
+                              <div style={{ fontSize: 10, color: C.gray400 }}>{job.estimator || "Unassigned"}</div>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              {job.bidDueDate ? (
+                                <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isOverdue ? C.redBg : isDueSoon ? C.yellowBg : C.greenBg, color: isOverdue ? C.red : isDueSoon ? C.yellow : C.green }}>{isOverdue ? "OVERDUE" : ""} {new Date(job.bidDueDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                              ) : <span style={{ fontSize: 10, color: C.gray400 }}>No date</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {estimatingJobs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 48, background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
                   <div style={{ fontSize: 48, opacity: 0.15, marginBottom: 12 }}>📐</div>
@@ -600,6 +641,7 @@
                                 <div style={{ display: "flex", gap: 4 }}>
                                   {ests.length > 0 && <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.navy + "15", color: C.navy }}>{ests.length} est</span>}
                                   {approved.length > 0 && <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: C.greenBg, color: C.green }}>✓ Approved</span>}
+                                  {job.bidDueDate && (() => { const today = new Date().toISOString().split("T")[0]; const overdue = job.bidDueDate < today; const soon = !overdue && job.bidDueDate <= new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0]; return <span style={{ padding: "2px 6px", borderRadius: 5, fontSize: 9, fontWeight: 700, background: overdue ? C.redBg : soon ? C.yellowBg : C.gray100, color: overdue ? C.red : soon ? C.yellow : C.gray500 }}>{overdue ? "⚠ " : "📅 "}{new Date(job.bidDueDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>; })()}
                                   <MarketTag market={job.market} />
                                 </div>
                                 <button onClick={() => startEstimate(job.id)} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.red, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{ests.length > 0 ? "+ Add" : "Create"}</button>
@@ -3700,6 +3742,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [viewMode, setViewMode] = useState("kanban");
       const [selectedLead, setSelectedLead] = useState(null);
       const [showCreate, setShowCreate] = useState(false);
+      const [showBidDatePrompt, setShowBidDatePrompt] = useState(null); // leadId awaiting bid date
+      const [bidDateInput, setBidDateInput] = useState("");
       const [search, setSearch] = useState("");
       const [marketFilter, setMarketFilter] = useState("All");
       const [dragLead, setDragLead] = useState(null);
@@ -3715,7 +3759,15 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const handleCreate = (lead) => { setLeads(prev => [{ ...lead, id: generateId(), stage: "new_lead", createdAt: new Date().toISOString(), activities: [{ type: "created", text: "Project created", by: user.name, at: new Date().toISOString() }] }, ...prev]); setShowCreate(false); };
       const handleUpdate = (id, updates) => setLeads(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
-      const handleStageChange = (leadId, newStage) => { setLeads(prev => prev.map(l => l.id !== leadId ? l : { ...l, stage: newStage, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to ${SALES_STAGES.find(s => s.id === newStage)?.label}`, by: user.name, at: new Date().toISOString() }] })); };
+      const handleStageChange = (leadId, newStage) => {
+        if (newStage === "being_estimated") { setShowBidDatePrompt(leadId); setBidDateInput(""); return; }
+        setLeads(prev => prev.map(l => l.id !== leadId ? l : { ...l, stage: newStage, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to ${SALES_STAGES.find(s => s.id === newStage)?.label}`, by: user.name, at: new Date().toISOString() }] }));
+      };
+      const handleConfirmBidDate = () => {
+        if (!bidDateInput) return;
+        setLeads(prev => prev.map(l => l.id !== showBidDatePrompt ? l : { ...l, stage: "being_estimated", bidDueDate: bidDateInput, activities: [...(l.activities || []), { type: "stage_change", text: `Moved to Being Estimated — Bid due ${new Date(bidDateInput).toLocaleDateString()}`, by: user.name, at: new Date().toISOString() }] }));
+        setShowBidDatePrompt(null); setBidDateInput("");
+      };
       const handleDrop = (stageId, e) => { e.preventDefault(); if (dragLead && dragLead.stage !== stageId) handleStageChange(dragLead.id, stageId); setDragLead(null); };
       const handleDelete = (id) => { if (confirm("Delete this lead?")) { setLeads(prev => prev.filter(l => l.id !== id)); setSelectedLead(null); } };
 
@@ -3802,6 +3854,20 @@ Extract every identifiable expense. Use the most specific category possible. If 
             )}
           </div>
           {showCreate && <CreateLeadModal entities={entities} onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
+          {showBidDatePrompt && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)" }}>
+              <div style={{ background: C.white, borderRadius: 16, width: 400, padding: "28px", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Move to Estimating</h3>
+                <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Set the bid due date for this job before sending to estimating.</p>
+                <label style={{ fontSize: 11, fontWeight: 600, color: C.navy, display: "block", marginBottom: 4 }}>Bid Due Date *</label>
+                <input type="date" value={bidDateInput} onChange={e => setBidDateInput(e.target.value)} style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 14, color: C.navy, outline: "none", boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
+                  <button onClick={() => { setShowBidDatePrompt(null); setBidDateInput(""); }} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                  <button onClick={handleConfirmBidDate} disabled={!bidDateInput} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: bidDateInput ? `linear-gradient(135deg, #6366F1, #4F46E5)` : C.gray200, color: bidDateInput ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: bidDateInput ? "pointer" : "default" }}>Send to Estimating</button>
+                </div>
+              </div>
+            </div>
+          )}
           {selectedLead && <LeadDetailPanel lead={leads.find(l => l.id === selectedLead.id) || selectedLead} entities={entities} onClose={() => setSelectedLead(null)} onUpdate={handleUpdate} onStageChange={handleStageChange} onDelete={handleDelete} user={user} />}
         </div>
       );
@@ -3912,8 +3978,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← Close</button>
                 <button onClick={() => onDelete(lead.id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Delete</button>
               </div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{co?.name || lead.company || "Untitled"}</h2>
-              <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>{ct?.name || lead.contactName} · {ct?.email || lead.contactEmail}</p>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 4px" }}>{lead.jobName || co?.name || lead.company || "Untitled"}</h2>
+              <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>{co && lead.jobName ? `🏢 ${co.name} · ` : ""}{ct?.name || lead.contactName} · {ct?.email || lead.contactEmail}</p>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: currentStage?.color + "30", color: currentStage?.color }}>{currentStage?.label}</span>
                 <MarketTag market={lead.market} />
@@ -3930,12 +3996,28 @@ Extract every identifiable expense. Use the most specific category possible. If 
             <div style={{ padding: "20px 24px" }}>
               {activeTab === "details" && (
                 <div style={{ display: "grid", gap: 16 }}>
-                  {/* Linked records */}
+                  {/* Linked records — full detail cards */}
                   {(co || pr || ct) && <div>
                     <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 8px" }}>Linked Records</h4>
-                    {co && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 6 }}><span style={{ fontSize: 14, marginRight: 8 }}>🏢</span><span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{co.name}</span></div>}
-                    {pr && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 6 }}><span style={{ fontSize: 14, marginRight: 8 }}>🏠</span><span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{pr.name}</span><span style={{ fontSize: 10, color: C.gray400, marginLeft: 8 }}>{pr.address}</span></div>}
-                    {ct && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 6 }}><span style={{ fontSize: 14, marginRight: 8 }}>👤</span><span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{ct.name}</span><span style={{ fontSize: 10, color: C.gray400, marginLeft: 8 }}>{ct.email}</span></div>}
+                    {co && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>🏢 {co.name}</div>
+                      <div style={{ fontSize: 11, color: C.gray500, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                        {co.type && <span>{co.type}</span>}{co.phone && <span>📞 {co.phone}</span>}{co.address && <span>📍 {co.address}</span>}{co.market && <span>🌐 {MARKET_LABELS[co.market] || co.market}</span>}
+                      </div>
+                    </div>}
+                    {pr && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>🏠 {pr.name}</div>
+                      <div style={{ fontSize: 11, color: C.gray500 }}>
+                        {pr.address && <div>📍 {pr.address}</div>}
+                        <div>{pr.propertyType && `${pr.propertyType} · `}{pr.sqft ? `${pr.sqft.toLocaleString()} SF` : ""}{pr.roofType ? ` · ${pr.roofType}` : ""}</div>
+                      </div>
+                    </div>}
+                    {ct && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>👤 {ct.name} {ct.contactType && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: ct.contactType === "B2B" ? C.blueBg : C.greenBg, color: ct.contactType === "B2B" ? C.blue : C.green, marginLeft: 6 }}>{ct.contactType}</span>}</div>
+                      <div style={{ fontSize: 11, color: C.gray500 }}>
+                        {ct.email && <div>✉ {ct.email}</div>}{ct.phone && <div>📞 {ct.phone}</div>}{ct.title && <div>💼 {ct.title}</div>}
+                      </div>
+                    </div>}
                   </div>}
                   <div style={{ display: "grid", gap: 4 }}>
                     {[["Source", lead.source], ["Market", MARKET_LABELS[lead.market]], ["Est. Value", formatCurrency(lead.estimatedValue || 0)], ["Created", new Date(lead.createdAt).toLocaleDateString()]].map(([l, v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>{l}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{v}</span></div>)}
@@ -4055,11 +4137,20 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   {Object.entries(entity).filter(([k]) => !["id", "createdAt", "companyId"].includes(k) && entity[k]).map(([k, v]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize" }}>{k.replace(/([A-Z])/g, " $1")}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{String(v)}</span></div>)}
                 </div>
                 {/* Related Properties */}
-                {relProps.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Properties ({relProps.length})</h4>
+                {type === "company" && <div style={{ marginBottom: 24 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: 0 }}>Properties ({relProps.length})</h4><button onClick={() => { setSelected(null); setShowCreate("property"); }} style={{ padding: "3px 10px", borderRadius: 5, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 600, cursor: "pointer" }}>+ Add Property</button></div>
                   {relProps.map(p => <div key={p.id} onClick={() => setSelected({ type: "property", id: p.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer", display: "flex", justifyContent: "space-between" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>🏠 {p.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{p.address}</div></div><span style={{ fontSize: 10, color: C.gray400 }}>{ticketsFor("property", p.id).length} tickets</span></div>)}
+                  {relProps.length === 0 && <p style={{ fontSize: 12, color: C.gray400, textAlign: "center", padding: 12, background: C.gray50, borderRadius: 8 }}>No properties yet</p>}
                 </div>}
                 {/* Related Contacts */}
-                {relContacts.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Contacts ({relContacts.length})</h4>
+                {type === "company" && <div style={{ marginBottom: 24 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: 0 }}>Contacts ({relContacts.length})</h4><button onClick={() => { setSelected(null); setShowCreate("contact"); }} style={{ padding: "3px 10px", borderRadius: 5, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 600, cursor: "pointer" }}>+ Add Contact</button></div>
+                  {relContacts.map(c => <div key={c.id} onClick={() => setSelected({ type: "contact", id: c.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>👤 {c.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{c.email} · {c.phone}</div></div>)}
+                  {relContacts.length === 0 && <p style={{ fontSize: 12, color: C.gray400, textAlign: "center", padding: 12, background: C.gray50, borderRadius: 8 }}>No contacts yet</p>}
+                </div>}
+                {/* Related entities for non-company types */}
+                {type !== "company" && relProps.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Properties ({relProps.length})</h4>
+                  {relProps.map(p => <div key={p.id} onClick={() => setSelected({ type: "property", id: p.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>🏠 {p.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{p.address}</div></div>)}
+                </div>}
+                {type !== "company" && relContacts.length > 0 && <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Contacts ({relContacts.length})</h4>
                   {relContacts.map(c => <div key={c.id} onClick={() => setSelected({ type: "contact", id: c.id })} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = C.gray50} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>👤 {c.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{c.email} · {c.phone}</div></div>)}
                 </div>}
                 {/* Create Project or Ticket */}
@@ -4073,8 +4164,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 {/* Sales History */}
                 <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Sales History ({leads.length})</h4>
                   {leads.length > 0 ? leads.map(l => { const stg = SALES_STAGES.find(s => s.id === l.stage); return (
-                    <div key={l.id} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>💼 {l.company || companies.find(c => c.id === l.companyId)?.name || "Lead"}</div><div style={{ fontSize: 10, color: C.gray400 }}>{stg?.label} · {new Date(l.createdAt).toLocaleDateString()}</div></div>
+                    <div key={l.id} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>💼 {l.jobName || l.company || companies.find(c => c.id === l.companyId)?.name || "Project"}</div><div style={{ fontSize: 10, color: C.gray400 }}>{stg?.label} · {l.estimator ? `Est: ${l.estimator} · ` : ""}{new Date(l.createdAt).toLocaleDateString()}{l.bidDueDate ? ` · Bid: ${new Date(l.bidDueDate + "T12:00:00").toLocaleDateString()}` : ""}</div></div>
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{formatCurrency(l.estimatedValue || 0)}</span>
                     </div>);
                   }) : <p style={{ fontSize: 12, color: C.gray400, textAlign: "center", padding: 12, background: C.gray50, borderRadius: 8 }}>No sales history</p>}
@@ -4131,7 +4222,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     function CreateEntityModal({ type, companies, contacts, onClose, onCreate }) {
       const labels = { company: "Company", property: "Property", contact: "Contact" };
       const [form, setForm] = useState(
-        type === "company" ? { name: "", market: "ATL", type: "Property Manager", phone: "", email: "", address: "", notes: "" } :
+        type === "company" ? { name: "", market: "ATL", type: "Property Manager", phone: "", address: "", notes: "" } :
         type === "property" ? { name: "", companyId: "", contactId: "", propertyType: "Apartment Complex", address: "", market: "ATL", sqft: 0, roofType: "", buildingCount: 1, notes: "" } :
         { name: "", companyId: "", contactType: "B2B", email: "", phone: "", title: "", notes: "" }
       );
@@ -4182,10 +4273,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <div><label style={ls}>Market</label><select style={fs} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>{MARKETS.map(m => <option key={m} value={m}>{MARKET_LABELS[m]}</option>)}</select></div>
                   <div><label style={ls}>Type</label><select style={fs} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>{COMPANY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
-                  <div><label style={ls}>Email</label><input style={fs} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-                </div>
+                <div><label style={ls}>Phone</label><input style={fs} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
                 <div><label style={ls}>Address</label><input style={fs} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
               </>}
 
@@ -4407,9 +4495,18 @@ Extract every identifiable expense. Use the most specific category possible. If 
             <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 32px" }}>
               {activeTab === "details" && <div style={{ display: "grid", gap: 16 }}>
                 <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Linked Records</h4>
-                  {company && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4 }}>🏢 <span style={{ fontWeight: 700, color: C.navy }}>{company.name}</span></div>}
-                  {property && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4 }}>🏠 <span style={{ fontWeight: 700, color: C.navy }}>{property.name}</span> <span style={{ fontSize: 10, color: C.gray400 }}>{property.address}</span></div>}
-                  {contact && <div style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4 }}>👤 <span style={{ fontWeight: 700, color: C.navy }}>{contact.name}</span> <span style={{ fontSize: 10, color: C.gray400 }}>{contact.email}</span></div>}
+                  {company && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>🏢 {company.name}</div>
+                    <div style={{ fontSize: 11, color: C.gray500 }}>{company.type && <span>{company.type} · </span>}{company.phone && <span>📞 {company.phone} · </span>}{company.address && <span>📍 {company.address}</span>}</div>
+                  </div>}
+                  {property && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>🏠 {property.name}</div>
+                    <div style={{ fontSize: 11, color: C.gray500 }}>{property.address && <span>📍 {property.address} · </span>}{property.propertyType || ""}{property.sqft ? ` · ${property.sqft.toLocaleString()} SF` : ""}</div>
+                  </div>}
+                  {contact && <div style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8, background: C.gray50 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 4 }}>👤 {contact.name} {contact.contactType && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: contact.contactType === "B2B" ? C.blueBg : C.greenBg, color: contact.contactType === "B2B" ? C.blue : C.green, marginLeft: 6 }}>{contact.contactType}</span>}</div>
+                    <div style={{ fontSize: 11, color: C.gray500 }}>{contact.email && <span>✉ {contact.email} · </span>}{contact.phone && <span>📞 {contact.phone}</span>}{contact.title && <span> · 💼 {contact.title}</span>}</div>
+                  </div>}
                 </div>
                 <div>{[["Type", ticket.type], ["Priority", ticket.priority], ["Assigned", ticket.assignedTo || "Unassigned"], ["Created", new Date(ticket.createdAt).toLocaleString()], ["By", ticket.createdBy]].map(([l, v]) => <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>{l}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{v}</span></div>)}</div>
                 {ticket.description && <div style={{ padding: "10px 12px", borderRadius: 8, background: C.gray50, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{ticket.description}</div>}
@@ -4563,7 +4660,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       // ── Tool definitions for Claude ──────────────────────────
       const TOOLS = [
-        { name: "create_company", description: "Create a new company in the CRM directory", input_schema: { type: "object", properties: { name: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, type: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, address: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
+        { name: "create_company", description: "Create a new company in the CRM directory", input_schema: { type: "object", properties: { name: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, type: { type: "string" }, phone: { type: "string" }, address: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
         { name: "create_property", description: "Create a new property linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" } }, required: ["name"] } },
         { name: "create_contact", description: "Create a new contact linked to a company", input_schema: { type: "object", properties: { name: { type: "string" }, companyId: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" } }, required: ["name"] } },
         { name: "create_lead", description: "Create a new sales lead/opportunity in the pipeline", input_schema: { type: "object", properties: { company: { type: "string", description: "Company name if not linking to existing" }, companyId: { type: "string", description: "ID of existing company" }, propertyId: { type: "string" }, contactId: { type: "string" }, contactName: { type: "string" }, contactEmail: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, source: { type: "string" }, estimatedValue: { type: "number" }, notes: { type: "string" } }, required: [] } },
