@@ -102,9 +102,9 @@
     }
 
     // ─── ROLE SYSTEM (dynamic — Firestore-backed with hardcoded fallback) ───
-    const ALL_MODULES = ["daily_digest", "directory", "inspections", "sales", "estimating", "production", "service", "finance", "reports", "catalog"];
-    const MODULE_LABELS = { daily_digest: "Daily Digest", directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
-    const MODULE_ICONS = { daily_digest: "📅", directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
+    const ALL_MODULES = ["daily_digest", "tasks", "directory", "inspections", "sales", "estimating", "production", "service", "finance", "reports", "catalog"];
+    const MODULE_LABELS = { daily_digest: "Daily Digest", tasks: "Task Manager", directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
+    const MODULE_ICONS = { daily_digest: "📅", tasks: "✅", directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
 
     const ROLE_PRESETS = {
       admin: { label: "Admin", modules: ALL_MODULES, color: "#E63946" },
@@ -5408,6 +5408,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
       // "this monday", "this friday", etc.
       const thisDayMatch = lower.match(/\bthis\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
       if (thisDayMatch) { const target = dayNames.indexOf(thisDayMatch[1]); const d = new Date(today); const diff = (target - d.getDay() + 7) % 7; if (diff > 0) { d.setDate(d.getDate() + diff); return d.toISOString().split("T")[0]; } }
+      // bare day name: "tuesday", "on tuesday", "call tuesday", "call on tuesday"
+      const bareDayMatch = lower.match(/\b(?:on\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+      if (bareDayMatch) { const target = dayNames.indexOf(bareDayMatch[1]); const d = new Date(today); const diff = (target - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + diff); return d.toISOString().split("T")[0]; }
       // "in X days"
       const inDaysMatch = lower.match(/\bin\s+(\d+)\s+days?\b/);
       if (inDaysMatch) { const d = new Date(today); d.setDate(d.getDate() + parseInt(inDaysMatch[1])); return d.toISOString().split("T")[0]; }
@@ -6222,6 +6225,135 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     // MODULE: DAILY DIGEST
     // ============================================================
+    function TaskManagerModule({ user, role, crmUsers }) {
+      const isManagerOrAdmin = role === "admin" || role === "owner" || role === "manager" || role === "lead_estimator";
+      const [viewUser, setViewUser] = useState(user.name);
+      const [filterStatus, setFilterStatus] = useState("active"); // active, completed, all
+
+      // Gather all tasks across all objects
+      const allTaskKeys = Object.keys(localStorage).filter(k => k.startsWith("cr_tasks_"));
+      const allTasks = [];
+      allTaskKeys.forEach(key => {
+        try {
+          const tasks = JSON.parse(localStorage.getItem(key) || "[]");
+          tasks.forEach(t => { allTasks.push({ ...t, source: key.replace("cr_tasks_", ""), _storageKey: key }); });
+        } catch(e) {}
+      });
+
+      // Filter by user
+      const userTasks = viewUser === "__all__" ? allTasks : allTasks.filter(t => t.assignee === viewUser || (!t.assignee && t.createdBy === viewUser));
+
+      // Filter by status
+      const filteredTasks = filterStatus === "active" ? userTasks.filter(t => !t.completed) :
+        filterStatus === "completed" ? userTasks.filter(t => t.completed) : userTasks;
+
+      // Sort: overdue first, then by due date, then no-date last
+      const today = new Date().toISOString().split("T")[0];
+      const sorted = [...filteredTasks].sort((a, b) => {
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return a.dueDate.localeCompare(b.dueDate);
+      });
+
+      const overdue = sorted.filter(t => t.dueDate && t.dueDate < today && !t.completed);
+      const todayTasks = sorted.filter(t => t.dueDate === today && !t.completed);
+      const upcoming = sorted.filter(t => t.dueDate && t.dueDate > today && !t.completed);
+      const noDueDate = sorted.filter(t => !t.dueDate && !t.completed);
+      const completed = sorted.filter(t => t.completed);
+
+      // Get unique team members for filter
+      const teamMembers = [...new Set(allTasks.map(t => t.assignee).filter(Boolean))].sort();
+
+      const toggleComplete = (task) => {
+        try {
+          const existing = JSON.parse(localStorage.getItem(task._storageKey) || "[]");
+          const updated = existing.map(t => t.id === task.id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t);
+          localStorage.setItem(task._storageKey, JSON.stringify(updated));
+          if (firestoreDb) { firestoreDb.collection("kv").doc(task._storageKey).set({ value: JSON.stringify(updated) }); }
+          window.location.reload();
+        } catch(e) {}
+      };
+
+      const formatSource = (src) => {
+        if (!src) return "";
+        const parts = src.split("_");
+        if (parts.length >= 2) return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+        return src;
+      };
+
+      const TaskItem = ({ t }) => {
+        const isOverdue = t.dueDate && t.dueDate < today && !t.completed;
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, background: t.completed ? C.gray50 : C.white }}>
+            <input type="checkbox" checked={!!t.completed} onChange={() => toggleComplete(t)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.red }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.completed ? C.gray400 : C.navy, textDecoration: t.completed ? "line-through" : "none" }}>{t.title}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
+                {t.dueDate && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "#FEE2E2" : "#EFF6FF", color: isOverdue ? C.red : C.blue, fontWeight: 600 }}>{isOverdue ? "⚠ " : ""}{t.dueDate}</span>}
+                {t.assignee && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: C.gray100, color: C.gray600 }}>👤 {t.assignee}</span>}
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: C.gray100, color: C.gray500 }}>📁 {formatSource(t.source)}</span>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const SectionBlock = ({ title, icon, tasks, color, borderColor }) => tasks.length > 0 ? (
+        <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `2px solid ${borderColor || C.gray300}` }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: color || C.navy }}>{icon} {title} ({tasks.length})</span>
+          </div>
+          {tasks.map(t => <TaskItem key={t.id + t._storageKey} t={t} />)}
+        </div>
+      ) : null;
+
+      return (
+        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: C.navy, margin: 0 }}>✅ Task Manager</h2>
+            <p style={{ fontSize: 12, color: C.gray500, margin: "4px 0 0" }}>View and manage tasks across all objects</p>
+          </div>
+
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+            {isManagerOrAdmin && (
+              <select value={viewUser} onChange={e => setViewUser(e.target.value)} style={{ padding: "7px 12px", borderRadius: 6, border: `1px solid ${C.gray300}`, fontSize: 12, color: C.navy, background: C.white }}>
+                <option value={user.name}>My Tasks</option>
+                <option value="__all__">All Team Tasks</option>
+                {teamMembers.filter(m => m !== user.name).map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+            <div style={{ display: "flex", borderRadius: 6, border: `1px solid ${C.gray300}`, overflow: "hidden" }}>
+              {[["active", "Active"], ["completed", "Completed"], ["all", "All"]].map(([val, label]) => (
+                <button key={val} onClick={() => setFilterStatus(val)} style={{ padding: "7px 14px", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", background: filterStatus === val ? C.navy : C.white, color: filterStatus === val ? C.white : C.gray600 }}>{label}</button>
+              ))}
+            </div>
+            <div style={{ marginLeft: "auto", fontSize: 12, color: C.gray500, fontWeight: 600 }}>{filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}</div>
+          </div>
+
+          {/* Task Sections */}
+          {filterStatus !== "completed" && (
+            <>
+              <SectionBlock title="Overdue" icon="⚠" tasks={overdue} color={C.red} borderColor={C.red} />
+              <SectionBlock title="Due Today" icon="📋" tasks={todayTasks} color={C.navy} borderColor={C.blue} />
+              <SectionBlock title="Upcoming" icon="📆" tasks={upcoming} color={C.navy} borderColor={C.blue} />
+              <SectionBlock title="No Due Date" icon="📌" tasks={noDueDate} color={C.gray500} borderColor={C.gray300} />
+            </>
+          )}
+          {filterStatus !== "active" && completed.length > 0 && (
+            <SectionBlock title="Completed" icon="✓" tasks={completed} color={C.green} borderColor={C.green} />
+          )}
+          {filteredTasks.length === 0 && (
+            <div style={{ background: C.white, borderRadius: 10, padding: 40, textAlign: "center", border: `1px solid ${C.gray200}` }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>🎉</div>
+              <div style={{ fontSize: 14, color: C.gray500, fontWeight: 600 }}>No tasks found</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function DailyDigestModule({ user, role, entities, salesLeads, serviceTickets, inspections, crmUsers }) {
       const today = new Date().toISOString().split("T")[0];
       const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -6247,6 +6379,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const todayTasks = myTasks.filter(t => t.dueDate === today);
       const overdueTasks = myTasks.filter(t => t.dueDate && t.dueDate < today);
       const upcomingTasks = myTasks.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]);
+      const noDueDateTasks = myTasks.filter(t => !t.dueDate);
 
       // Today's inspections for this user
       const myInspections = (inspections || []).filter(insp => {
@@ -6448,6 +6581,14 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>📆 Upcoming This Week ({upcomingTasks.length})</span>
                 </div>
                 {upcomingTasks.map(t => <TaskRow key={t.id} t={t} />)}
+              </div>
+            )}
+            {noDueDateTasks.length > 0 && (
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `2px solid ${C.gray300}` }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.gray500 }}>📌 No Due Date ({noDueDateTasks.length})</span>
+                </div>
+                {noDueDateTasks.map(t => <TaskRow key={t.id} t={t} />)}
               </div>
             )}
           </div>
@@ -7614,6 +7755,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
 
       const modules = [
         { key: "daily_digest", label: "Daily Digest", icon: "📅" },
+        { key: "tasks", label: "Task Manager", icon: "✅" },
         { key: "directory", label: "Directory", icon: "📇" },
         { key: "inspections", label: "Inspections", icon: "🔍" },
         { key: "sales", label: "Project Sales", icon: "💼" },
@@ -7836,6 +7978,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                 </div>
               )}
               {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} crmUsers={crmUsers} />}
+              {!settingsView && currentModule === "tasks" && <TaskManagerModule user={user} role={role} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
               {!settingsView && currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
