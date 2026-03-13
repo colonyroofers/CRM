@@ -4648,6 +4648,91 @@ Extract every identifiable expense. Use the most specific category possible. If 
       );
     }
 
+    // SOV Editor — create/edit Schedule of Values from project detail
+    function SovEditor({ leadId, projectName, estimatedValue, user }) {
+      const [sovItems, setSovItems] = useState([]);
+      const [existingSov, setExistingSov] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [newItem, setNewItem] = useState({ description: "", amount: "" });
+
+      // Load existing SOV for this lead
+      useEffect(() => {
+        if (!firestoreDb || !leadId) { setLoading(false); return; }
+        firestoreDb.collection("cr_schedule_of_values").where("leadId", "==", leadId).limit(1).get().then(snap => {
+          if (!snap.empty) { const doc = snap.docs[0]; const data = doc.data(); setExistingSov({ ...data, _docId: doc.id }); setSovItems(data.items || []); }
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      }, [leadId]);
+
+      const addItem = () => {
+        if (!newItem.description.trim()) return;
+        setSovItems(prev => [...prev, { id: generateId(), description: newItem.description.trim(), amount: Number(newItem.amount) || 0, completionPct: 0, invoiced: false }]);
+        setNewItem({ description: "", amount: "" });
+      };
+      const removeItem = (id) => setSovItems(prev => prev.filter(i => i.id !== id));
+      const updateItem = (id, field, val) => setSovItems(prev => prev.map(i => i.id === id ? { ...i, [field]: field === "amount" || field === "completionPct" ? Number(val) || 0 : val } : i));
+
+      const handleSave = async () => {
+        if (!firestoreDb || sovItems.length === 0) return;
+        const sovData = { leadId, projectName, items: sovItems, totalValue: sovItems.reduce((s, i) => s + i.amount, 0), updatedAt: new Date().toISOString(), updatedBy: user.name };
+        try {
+          if (existingSov?._docId) { await firestoreDb.collection("cr_schedule_of_values").doc(existingSov._docId).update(sovData); }
+          else { sovData.createdAt = new Date().toISOString(); sovData.createdBy = user.name; const ref = await firestoreDb.collection("cr_schedule_of_values").add(sovData); setExistingSov({ ...sovData, _docId: ref.id }); }
+          alert("Schedule of Values saved!");
+        } catch (e) { alert("Error saving SOV: " + e.message); }
+      };
+
+      const totalSov = sovItems.reduce((s, i) => s + i.amount, 0);
+      const completedValue = sovItems.reduce((s, i) => s + (i.amount * (i.completionPct / 100)), 0);
+
+      if (loading) return React.createElement("div", { style: { textAlign: "center", padding: 20, color: C.gray400, fontSize: 12 } }, "Loading...");
+
+      return React.createElement("div", null,
+        /* Summary cards */
+        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 16 } },
+          React.createElement("div", { style: { flex: 1, padding: "10px 14px", borderRadius: 8, background: C.gray50, border: `1px solid ${C.gray200}`, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 10, color: C.gray400, fontWeight: 600 } }, "Contract Value"),
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.navy } }, formatCurrency(estimatedValue))
+          ),
+          React.createElement("div", { style: { flex: 1, padding: "10px 14px", borderRadius: 8, background: C.gray50, border: `1px solid ${C.gray200}`, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 10, color: C.gray400, fontWeight: 600 } }, "SOV Total"),
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: totalSov > 0 ? C.navy : C.gray400 } }, formatCurrency(totalSov))
+          ),
+          React.createElement("div", { style: { flex: 1, padding: "10px 14px", borderRadius: 8, background: C.gray50, border: `1px solid ${C.gray200}`, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 10, color: C.gray400, fontWeight: 600 } }, "Completed"),
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.green } }, formatCurrency(completedValue))
+          )
+        ),
+        /* Line items */
+        sovItems.length > 0 && React.createElement("div", { style: { borderRadius: 8, border: `1px solid ${C.gray200}`, overflow: "hidden", marginBottom: 12 } },
+          React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
+            React.createElement("thead", null, React.createElement("tr", { style: { background: C.gray50 } },
+              React.createElement("th", { style: { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400 } }, "Description"),
+              React.createElement("th", { style: { padding: "8px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400 } }, "Amount"),
+              React.createElement("th", { style: { padding: "8px 10px", textAlign: "center", fontSize: 10, fontWeight: 700, color: C.gray400 } }, "% Complete"),
+              React.createElement("th", { style: { padding: "8px 10px", textAlign: "center", fontSize: 10, fontWeight: 700, color: C.gray400 } }, "")
+            )),
+            React.createElement("tbody", null, sovItems.map(item =>
+              React.createElement("tr", { key: item.id, style: { borderTop: `1px solid ${C.gray100}` } },
+                React.createElement("td", { style: { padding: "8px 10px" } }, React.createElement("input", { value: item.description, onChange: e => updateItem(item.id, "description", e.target.value), style: { width: "100%", border: "none", fontSize: 12, color: C.navy, background: "transparent", outline: "none" } })),
+                React.createElement("td", { style: { padding: "8px 10px", textAlign: "right" } }, React.createElement("input", { type: "number", value: item.amount, onChange: e => updateItem(item.id, "amount", e.target.value), style: { width: 90, border: `1px solid ${C.gray200}`, borderRadius: 4, padding: "4px 6px", fontSize: 12, textAlign: "right", color: C.navy, outline: "none" } })),
+                React.createElement("td", { style: { padding: "8px 10px", textAlign: "center" } }, React.createElement("input", { type: "number", min: 0, max: 100, value: item.completionPct, onChange: e => updateItem(item.id, "completionPct", e.target.value), style: { width: 50, border: `1px solid ${C.gray200}`, borderRadius: 4, padding: "4px 6px", fontSize: 12, textAlign: "center", color: C.navy, outline: "none" } })),
+                React.createElement("td", { style: { padding: "8px 10px", textAlign: "center" } }, React.createElement("button", { onClick: () => removeItem(item.id), style: { background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 } }, "✕"))
+              )
+            ))
+          )
+        ),
+        /* Add new item */
+        React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
+          React.createElement("input", { placeholder: "Line item description...", value: newItem.description, onChange: e => setNewItem(p => ({ ...p, description: e.target.value })), style: { flex: 1, padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy, outline: "none" } }),
+          React.createElement("input", { type: "number", placeholder: "Amount", value: newItem.amount, onChange: e => setNewItem(p => ({ ...p, amount: e.target.value })), style: { width: 100, padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy, outline: "none", textAlign: "right" } }),
+          React.createElement("button", { onClick: addItem, style: { padding: "8px 14px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" } }, "+ Add")
+        ),
+        /* Save button */
+        sovItems.length > 0 && React.createElement("button", { onClick: handleSave, style: { padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 12, fontWeight: 700, cursor: "pointer" } }, existingSov ? "Update SOV" : "Save Schedule of Values")
+      );
+    }
+
     function LeadDetailPanel({ lead, entities, onClose, onUpdate, onStageChange, onDelete, user, crmUsers, onMention, inspections, setInspections }) {
       const { companies, properties, contacts } = entities;
       const co = companies.find(c => c.id === lead.companyId);
@@ -4738,7 +4823,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
               {SALES_STAGES.map(s => <button key={s.id} onClick={() => onStageChange(lead.id, s.id)} style={{ padding: "5px 10px", borderRadius: 5, border: lead.stage === s.id ? `2px solid ${s.color}` : `1px solid ${C.gray200}`, background: lead.stage === s.id ? s.color + "15" : C.white, color: lead.stage === s.id ? s.color : C.gray500, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{s.label}</button>)}
             </div>
             <div style={{ display: "flex", borderBottom: `1px solid ${C.gray200}`, overflowX: "auto" }}>
-              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "lead" && i.entityId === lead.id).length})` }, { id: "tasks", label: "Tasks" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
+              {[{ id: "details", label: "Details" }, { id: "emails", label: `Emails (${(lead.emailLog || []).length})` }, { id: "estimates", label: "Estimates" }, { id: "sov", label: "SOV" }, { id: "inspections", label: `Inspections (${(inspections || []).filter(i => i.entityType === "lead" && i.entityId === lead.id).length})` }, { id: "tasks", label: "Tasks" }, { id: "activity", label: "Activity" }, { id: "actions", label: "Actions" }].map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 18px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, color: activeTab === t.id ? C.red : C.gray500, borderBottom: `2px solid ${activeTab === t.id ? C.red : "transparent"}`, whiteSpace: "nowrap" }}>{t.label}</button>)}
             </div>
             <div style={{ padding: "20px 24px" }}>
               {activeTab === "details" && (
@@ -4845,6 +4930,11 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   ))}
                 </div>}
               </div>)}
+              {activeTab === "sov" && (<div>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Schedule of Values</h4>
+                <p style={{ fontSize: 12, color: C.gray500, marginBottom: 16 }}>Create a Schedule of Values for progress billing on this project. Line items track completion % and generate invoices in Finance.</p>
+                <SovEditor leadId={lead.id} projectName={lead.jobName || co?.name || "Project"} estimatedValue={lead.estimatedValue || 0} user={user} />
+              </div>)}
               {activeTab === "inspections" && (<div>
                 <InspectionsList inspections={inspections || []} entityType="lead" entityId={lead.id} onOpen={ins => setEditingInspection(ins)} onCreate={handleCreateInspection} />
                 {editingInspection && <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onClose={() => setEditingInspection(null)} user={user} crmUsers={crmUsers} />}
@@ -4892,6 +4982,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [selected, setSelected] = useState(null);
       const [showCreateLead, setShowCreateLead] = useState(null); // { companyId, propertyId, contactId }
       const [showCreateTicket, setShowCreateTicket] = useState(null); // { companyId, propertyId, contactId }
+      const [viewingLead, setViewingLead] = useState(null);
+      const [viewingTicket, setViewingTicket] = useState(null);
 
       const s = search.toLowerCase();
       const filteredCo = companies.filter(c => !s || c.name?.toLowerCase().includes(s));
@@ -4995,21 +5087,21 @@ Extract every identifiable expense. Use the most specific category possible. If 
                     <button onClick={() => { setSelected(null); setShowCreateTicket({ companyId: type === "company" ? id : entity.companyId || "", propertyId: type === "property" ? id : "", contactId: type === "contact" ? id : "" }); }} style={{ flex: 1, padding: "14px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: `0 4px 12px ${C.red}30` }}>🔧 New Service Ticket</button>
                   </div>
                 </div>
-                {/* Sales History */}
+                {/* Sales History — clickable */}
                 <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Sales History ({leads.length})</h4>
                   {leads.length > 0 ? leads.map(l => { const stg = SALES_STAGES.find(s => s.id === l.stage); return (
-                    <div key={l.id} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div key={l.id} onClick={() => setViewingLead(l)} style={{ padding: "10px 14px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = C.blueBg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>💼 {l.jobName || l.company || companies.find(c => c.id === l.companyId)?.name || "Project"}</div><div style={{ fontSize: 10, color: C.gray400 }}>{stg?.label} · {l.estimator ? `Est: ${l.estimator} · ` : ""}{new Date(l.createdAt).toLocaleDateString()}{l.bidDueDate ? ` · Bid: ${new Date(l.bidDueDate + "T12:00:00").toLocaleDateString()}` : ""}</div></div>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{formatCurrency(l.estimatedValue || 0)}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{formatCurrency(l.estimatedValue || 0)}</span><span style={{ color: C.gray400, fontSize: 11 }}>→</span></div>
                     </div>);
                   }) : <p style={{ fontSize: 12, color: C.gray400, textAlign: "center", padding: 12, background: C.gray50, borderRadius: 8 }}>No sales history</p>}
                 </div>
-                {/* Service History */}
+                {/* Service History — clickable */}
                 <div><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Service History ({tix.length})</h4>
                   {tix.length > 0 ? tix.map(t => (
-                    <div key={t.id} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div key={t.id} onClick={() => setViewingTicket(t)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${C.gray200}`, marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = C.yellowBg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>🔧 {t.subject}</div><div style={{ fontSize: 10, color: C.gray400 }}>{t.type} · {t.status} · {new Date(t.createdAt).toLocaleDateString()}</div></div>
-                      <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: (TSTATUS_COLORS[t.status] || C.gray400) + "18", color: TSTATUS_COLORS[t.status] || C.gray400 }}>{t.status}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: (TSTATUS_COLORS[t.status] || C.gray400) + "18", color: TSTATUS_COLORS[t.status] || C.gray400 }}>{t.status}</span><span style={{ color: C.gray400, fontSize: 11 }}>→</span></div>
                     </div>
                   )) : <p style={{ fontSize: 12, color: C.gray400, textAlign: "center", padding: 12, background: C.gray50, borderRadius: 8 }}>No service history</p>}
                 </div>
@@ -5053,6 +5145,66 @@ Extract every identifiable expense. Use the most specific category possible. If 
           {showCreateLead && <CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} />}
           {showCreateTicket && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} />}
           <EntityDetail />
+          {/* Lead detail overlay from directory */}
+          {viewingLead && (() => {
+            const vl = salesLeads.find(l => l.id === viewingLead.id) || viewingLead;
+            const vlStage = SALES_STAGES.find(s => s.id === vl.stage);
+            const vlCo = companies.find(c => c.id === vl.companyId);
+            const vlPr = properties.find(p => p.id === vl.propertyId);
+            const vlCt = contacts.find(c => c.id === vl.contactId);
+            return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingLead(null)}>
+              <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+                <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white, borderRadius: "16px 16px 0 0" }}>
+                  <button onClick={() => setViewingLead(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>← Back</button>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{vl.jobName || vlCo?.name || "Project"}</h3>
+                  <p style={{ fontSize: 11, opacity: 0.7, margin: 0 }}>{vlCo?.name && vl.jobName ? `🏢 ${vlCo.name} · ` : ""}{vlCt?.name || ""}</p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                    <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: (vlStage?.color || C.gray400) + "30", color: vlStage?.color || C.gray400 }}>{vlStage?.label}</span>
+                    {vl.market && <MarketTag market={vl.market} />}
+                    <span style={{ fontSize: 15, fontWeight: 800, marginLeft: "auto" }}>{formatCurrency(vl.estimatedValue || 0)}</span>
+                  </div>
+                </div>
+                <div style={{ padding: "16px 24px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+                    {vlCo && <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Company</div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{vlCo.name}</div></div>}
+                    {vlPr && <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Property</div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{vlPr.name}</div><div style={{ fontSize: 10, color: C.gray400 }}>{vlPr.address}</div></div>}
+                    {vl.estimator && <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Estimator</div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{vl.estimator}</div></div>}
+                    {vl.bidDueDate && <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 10, color: C.gray400, fontWeight: 600 }}>Bid Due</div><div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{new Date(vl.bidDueDate + "T12:00:00").toLocaleDateString()}</div></div>}
+                  </div>
+                  {vl.scopeOfWork && <div style={{ padding: "10px 12px", borderRadius: 6, background: C.blueBg, border: `1px solid ${C.blue}30`, marginBottom: 16 }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Scope of Work</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{vl.scopeOfWork}</div></div>}
+                  <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Activity Log</h4>
+                  {(vl.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
+                  {(!vl.activities || vl.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
+                </div>
+              </div>
+            </div>);
+          })()}
+          {/* Ticket detail overlay from directory */}
+          {viewingTicket && (() => {
+            const vt = serviceTickets.find(t => t.id === viewingTicket.id) || viewingTicket;
+            const vtCo = companies.find(c => c.id === vt.companyId);
+            return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(17,29,53,0.6)", backdropFilter: "blur(4px)", display: "flex", justifyContent: "center", alignItems: "center" }} onClick={() => setViewingTicket(null)}>
+              <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 25px 60px rgba(0,0,0,0.3)" }} onClick={e => e.stopPropagation()}>
+                <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, borderRadius: "16px 16px 0 0" }}>
+                  <button onClick={() => setViewingTicket(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>← Back</button>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{vt.subject}</h3>
+                  <p style={{ fontSize: 11, opacity: 0.8, margin: 0 }}>{vtCo?.name || ""} · {vt.type || ""}</p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: "rgba(255,255,255,0.2)" }}>{vt.status}</span>
+                    <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: "rgba(255,255,255,0.2)" }}>{vt.priority}</span>
+                  </div>
+                </div>
+                <div style={{ padding: "16px 24px" }}>
+                  {vt.description && <div style={{ padding: "10px 12px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}`, marginBottom: 16, fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{vt.description}</div>}
+                  <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Activity Log</h4>
+                  {(vt.activities || []).slice().reverse().slice(0, 10).map((a, i) => <div key={i} style={{ padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, fontSize: 11 }}><span style={{ fontWeight: 600, color: C.navy }}>{a.by}</span> <span style={{ color: C.gray500 }}>— {a.text}</span> <span style={{ color: C.gray400, marginLeft: 4 }}>{new Date(a.at).toLocaleDateString()}</span></div>)}
+                  {(!vt.activities || vt.activities.length === 0) && <p style={{ fontSize: 12, color: C.gray400 }}>No activity yet</p>}
+                </div>
+              </div>
+            </div>);
+          })()}
         </div>
       );
     }
