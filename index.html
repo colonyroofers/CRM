@@ -347,6 +347,9 @@
       const [step, setStep] = useState(1); // 1=project, 2=buildings, 3=pricing, 4=review
       const [saving, setSaving] = useState(false);
       const [showEmail, setShowEmail] = useState(null);
+      const [roofRProcessing, setRoofRProcessing] = useState(false);
+      const [roofRError, setRoofRError] = useState(null);
+      const roofRInputRef = useRef(null);
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
       const refresh = async () => { setLoading(true); const s = await loadAllSubmissions(); setSubmissions(s); setLoading(false); };
@@ -399,6 +402,113 @@
       const updateBuilding = (idx, field, value) => { const u = [...buildings]; u[idx] = { ...u[idx], [field]: typeof value === "string" && !isNaN(value) && field !== "siteplanNum" && field !== "roofrNum" && field !== "predominantPitch" ? Number(value) : value }; setBuildings(u); };
       const removeBuilding = (idx) => { if (buildings.length <= 1) return; setBuildings(prev => prev.filter((_, i) => i !== idx)); };
 
+      // RoofR report upload and AI parsing
+      const handleRoofRUpload = async (file) => {
+        if (!file) return;
+        setRoofRProcessing(true); setRoofRError(null);
+        try {
+          const fileData = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.onerror = () => reject(new Error("File read failed"));
+            reader.readAsDataURL(file);
+          });
+          const base64Data = fileData.split(",")[1];
+          const mediaType = file.type || "application/pdf";
+          const isExcel = mediaType.includes("spreadsheet") || mediaType.includes("excel") || file.name.match(/\.(xlsx|xls|csv)$/i);
+
+          let contentParts = [];
+          if (isExcel) {
+            const binaryStr = atob(base64Data);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+            const workbook = XLSX.read(bytes, { type: "array" });
+            let csvText = "";
+            workbook.SheetNames.forEach(sheetName => { csvText += "=== Sheet: " + sheetName + " ===\n" + XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]) + "\n\n"; });
+            if (csvText.length > 40000) csvText = csvText.substring(0, 40000) + "\n...[truncated]";
+            contentParts.push({ type: "text", text: "[RoofR Report: " + file.name + "]\n\n" + csvText });
+          } else if (mediaType === "application/pdf") {
+            if (file.size > 2000000 && window.pdfjsLib) {
+              const binaryStr = atob(base64Data);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+              let fullText = "";
+              for (let p = 1; p <= pdf.numPages; p++) { const page = await pdf.getPage(p); const tc = await page.getTextContent(); fullText += "=== Page " + p + " ===\n" + tc.items.map(i => i.str).join(" ") + "\n\n"; }
+              if (fullText.length > 40000) fullText = fullText.substring(0, 40000) + "\n...[truncated]";
+              contentParts.push({ type: "text", text: "[RoofR Report PDF text: " + file.name + "]\n\n" + fullText });
+            } else {
+              contentParts.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } });
+              contentParts.push({ type: "text", text: "[RoofR Report: " + file.name + "]" });
+            }
+          } else {
+            contentParts.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } });
+            contentParts.push({ type: "text", text: "[RoofR Report image: " + file.name + "]" });
+          }
+
+          contentParts.push({ type: "text", text: `You are a roofing estimating assistant for Colony Roofers. Parse this RoofR roof measurement report and extract building measurements.
+
+Return ONLY valid JSON (no markdown fences) as an array of buildings:
+[{
+  "siteplanNum": "Building identifier from the report",
+  "roofrNum": "RoofR report/order number if visible",
+  "totalArea": <total roof area in sq ft>,
+  "pitchedArea": <pitched area sq ft or 0>,
+  "flatArea": <flat area sq ft or 0>,
+  "predominantPitch": "<pitch as X/12, e.g. 5/12>",
+  "eaves": <eaves linear feet>,
+  "valleys": <valleys linear feet>,
+  "hips": <hips linear feet>,
+  "ridges": <ridges linear feet>,
+  "rakes": <rakes linear feet>,
+  "wallFlashing": <wall flashing linear feet or 0>,
+  "stepFlashing": <step flashing linear feet or 0>,
+  "pipes": <number of pipe penetrations>,
+  "phase": 1
+}]
+
+Extract ALL buildings from the report. Use 0 for any measurement not found. For predominantPitch, use the most common pitch if multiple are listed. totalArea should be the TOTAL roof area including waste-relevant sections. Parse linear measurements carefully — they are critical for accurate pricing.` });
+
+          const response = await fetch("/api/ai", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: contentParts }] }),
+          });
+          if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || "API error " + response.status); }
+          const result = await response.json();
+          const text = result.content?.find(c => c.type === "text")?.text || "";
+          const cleaned = text.replace(/```json|```/g, "").trim();
+          const parsed = JSON.parse(cleaned);
+          const arr = Array.isArray(parsed) ? parsed : [parsed];
+
+          if (arr.length === 0) throw new Error("No buildings found in report");
+
+          const newBuildings = arr.map((b, i) => ({
+            ...EMPTY_BUILDING,
+            id: "rb" + (i + 1) + "_" + Date.now(),
+            siteplanNum: b.siteplanNum || b.buildingName || ("Bldg " + (i + 1)),
+            roofrNum: b.roofrNum || b.reportNumber || "",
+            totalArea: Number(b.totalArea) || 0,
+            pitchedArea: Number(b.pitchedArea) || 0,
+            flatArea: Number(b.flatArea) || 0,
+            predominantPitch: b.predominantPitch || "5/12",
+            eaves: Number(b.eaves) || 0,
+            valleys: Number(b.valleys) || 0,
+            hips: Number(b.hips) || 0,
+            ridges: Number(b.ridges) || 0,
+            rakes: Number(b.rakes) || 0,
+            wallFlashing: Number(b.wallFlashing) || 0,
+            stepFlashing: Number(b.stepFlashing) || 0,
+            pipes: Number(b.pipes) || 0,
+            phase: Number(b.phase) || 1,
+          }));
+
+          setBuildings(newBuildings);
+        } catch (err) {
+          console.error("RoofR parse error:", err);
+          setRoofRError("Failed to parse RoofR report: " + (err.message || "Unknown error") + ". You can enter measurements manually below.");
+        } finally { setRoofRProcessing(false); }
+      };
+
       const fs = { width: "100%", padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
       const numFs = { ...fs, textAlign: "right", width: 90 };
@@ -444,6 +554,33 @@
             {/* STEP 2: Buildings */}
             {step === 2 && (
               <div>
+                {/* RoofR Upload */}
+                <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, textAlign: "center", transition: "all 0.2s" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 10 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ color: C.white, fontSize: 18 }}>📄</span>
+                    </div>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Import from RoofR Report</div>
+                      <div style={{ fontSize: 12, color: C.gray500 }}>Upload a RoofR PDF or Excel report to auto-fill building measurements</div>
+                    </div>
+                  </div>
+                  {roofRProcessing ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0" }}>
+                      <Spinner size={16} color={C.navy} />
+                      <span style={{ fontSize: 13, color: C.navy, fontWeight: 600 }}>Parsing RoofR report with AI...</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                      <button onClick={() => roofRInputRef.current?.click()} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.navy}, ${C.navyLight})`, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{I.upload} Upload RoofR Report</button>
+                      <input ref={roofRInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleRoofRUpload(e.target.files[0]); e.target.value = ""; }} />
+                    </div>
+                  )}
+                  {roofRError && <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 6, background: C.yellowBg, color: C.yellow, fontSize: 12, fontWeight: 500, textAlign: "left" }}>{roofRError}</div>}
+                  <p style={{ fontSize: 10, color: C.gray400, margin: "10px 0 0" }}>Accepts PDF, Excel (.xlsx/.xls/.csv), or image files from RoofR</p>
+                </div>
+
+                {/* Building cards */}
                 {buildings.map((b, idx) => (
                   <div key={b.id || idx} style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}`, marginBottom: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -453,8 +590,9 @@
                         {buildings.length > 1 && <button onClick={() => removeBuilding(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button>}
                       </div>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
                       <div><label style={ls}>Siteplan #</label><input style={fs} value={b.siteplanNum} onChange={e => updateBuilding(idx, "siteplanNum", e.target.value)} /></div>
+                      <div><label style={ls}>RoofR #</label><input style={fs} value={b.roofrNum || ""} onChange={e => updateBuilding(idx, "roofrNum", e.target.value)} placeholder="Report #" /></div>
                       <div><label style={ls}>Phase</label><input style={fs} type="number" value={b.phase} onChange={e => updateBuilding(idx, "phase", e.target.value)} /></div>
                       <div><label style={ls}>Pitch</label><select style={fs} value={b.predominantPitch} onChange={e => updateBuilding(idx, "predominantPitch", e.target.value)}>{["4/12", "5/12", "6/12", "7/12", "8/12", "9/12", "10/12", "12/12"].map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                       <div><label style={ls}>Pipes</label><input style={fs} type="number" value={b.pipes} onChange={e => updateBuilding(idx, "pipes", e.target.value)} /></div>
