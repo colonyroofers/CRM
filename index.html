@@ -14,6 +14,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -24,6 +25,11 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
     @media print { .no-print { display: none !important; } .page-break { page-break-before: always; } }
+    @media (max-width: 768px) {
+      body { font-size: 14px; }
+      .sidebar-mobile-hidden { display: none !important; }
+      .sidebar-overlay { position: fixed !important; width: 100% !important; height: 100vh !important; min-width: 280px !important; z-index: 999 !important; }
+    }
   </style>
 </head>
 <body>
@@ -50,6 +56,7 @@
     }
 
     let firebaseApp = null, firebaseAuth = null, googleProvider = null, firestoreDb = null;
+    let firebaseStorage = null;
     let firebaseLoaded = false;
 
     async function loadFirebase() {
@@ -72,6 +79,12 @@
         firebaseAuth = firebase.auth();
         googleProvider = new firebase.auth.GoogleAuthProvider();
         firestoreDb = firebase.firestore();
+        // Enable offline persistence
+        firestoreDb.enablePersistence({ synchronizeTabs: true }).catch(err => {
+          if (err.code === 'failed-precondition') console.warn('Offline: multi-tab not supported');
+          if (err.code === 'unimplemented') console.warn('Offline: not supported in this browser');
+        });
+        firebaseStorage = firebase.storage();
         firebaseLoaded = true;
         console.log("Firebase loaded successfully");
         return true;
@@ -101,17 +114,176 @@
       return { user, loading, error, signIn, signOut };
     }
 
+    // ─── UTILITY HOOKS ──────────────────────────────────────
+    function useIsMobile(breakpoint = 768) {
+      const [isMobile, setIsMobile] = useState(window.innerWidth <= breakpoint);
+      useEffect(() => {
+        const handler = () => setIsMobile(window.innerWidth <= breakpoint);
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
+      }, [breakpoint]);
+      return isMobile;
+    }
+
+    function useOnlineStatus() {
+      const [isOnline, setIsOnline] = useState(navigator.onLine);
+      useEffect(() => {
+        const on = () => setIsOnline(true);
+        const off = () => setIsOnline(false);
+        window.addEventListener("online", on);
+        window.addEventListener("offline", off);
+        return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+      }, []);
+      return isOnline;
+    }
+
+    function daysBetween(d1, d2) {
+      return Math.floor((new Date(d2) - new Date(d1)) / 86400000);
+    }
+
+    // ─── NOTIFICATION ENGINE ───────────────────────────────────
+    function useNotificationEngine(salesLeads = [], serviceTickets = [], inspections = [], submissions = [], user, crmUsers = []) {
+      const [alerts, setAlerts] = useState([]);
+      const alertsRef = useRef({});
+
+      useEffect(() => {
+        const generateAlerts = () => {
+          const now = new Date();
+          const today = now.toISOString().split("T")[0];
+          const newAlerts = [];
+          const seen = {};
+
+          // 1. Bid due in 48 hours
+          salesLeads.forEach(lead => {
+            if (lead.status === "being_estimated" && lead.bidDueDate) {
+              const daysUntilDue = daysBetween(now, lead.bidDueDate);
+              if (daysUntilDue >= 0 && daysUntilDue <= 2) {
+                const key = `bid_due_${lead.id}`;
+                if (!seen[key]) {
+                  newAlerts.push({
+                    id: lead.id + "_bid_due",
+                    type: "bid_due",
+                    title: `Bid Due Soon: ${lead.projectName}`,
+                    message: `Bid is due in ${daysUntilDue} day${daysUntilDue !== 1 ? "s" : ""}`,
+                    severity: daysUntilDue === 0 ? "critical" : "warning",
+                    module: "sales",
+                    entityId: lead.id,
+                    createdAt: now.toISOString()
+                  });
+                  seen[key] = true;
+                }
+              }
+            }
+          });
+
+          // 2. Stale lead (new_lead or contacted with 3+ days no activity)
+          salesLeads.forEach(lead => {
+            if ((lead.status === "new_lead" || lead.status === "contacted") && lead.createdAt) {
+              const daysSinceActivity = daysBetween(lead.lastActivityAt || lead.createdAt, now);
+              if (daysSinceActivity >= 3) {
+                const key = `stale_lead_${lead.id}`;
+                if (!seen[key]) {
+                  newAlerts.push({
+                    id: lead.id + "_stale",
+                    type: "stale_lead",
+                    title: `Stale Lead: ${lead.projectName}`,
+                    message: `No activity for ${daysSinceActivity} days`,
+                    severity: "info",
+                    module: "sales",
+                    entityId: lead.id,
+                    createdAt: now.toISOString()
+                  });
+                  seen[key] = true;
+                }
+              }
+            }
+          });
+
+          // 3. Follow-up needed (proposal_sent with 3+ days no activity)
+          salesLeads.forEach(lead => {
+            if (lead.status === "proposal_sent" && lead.createdAt) {
+              const daysSinceActivity = daysBetween(lead.lastActivityAt || lead.createdAt, now);
+              if (daysSinceActivity >= 3) {
+                const key = `followup_${lead.id}`;
+                if (!seen[key]) {
+                  newAlerts.push({
+                    id: lead.id + "_followup",
+                    type: "follow_up",
+                    title: `Follow-up Needed: ${lead.projectName}`,
+                    message: `Proposal sent ${daysSinceActivity} days ago`,
+                    severity: "warning",
+                    module: "sales",
+                    entityId: lead.id,
+                    createdAt: now.toISOString()
+                  });
+                  seen[key] = true;
+                }
+              }
+            }
+          });
+
+          // 4. Emergency ticket (Emergency priority + New status)
+          serviceTickets.forEach(ticket => {
+            if (ticket.priority === "Emergency" && ticket.status === "New") {
+              const key = `emergency_${ticket.id}`;
+              if (!seen[key]) {
+                newAlerts.push({
+                  id: ticket.id + "_emergency",
+                  type: "emergency",
+                  title: `Emergency Service Ticket: ${ticket.title}`,
+                  message: `Requires immediate attention`,
+                  severity: "critical",
+                  module: "service",
+                  entityId: ticket.id,
+                  createdAt: now.toISOString()
+                });
+                seen[key] = true;
+              }
+            }
+          });
+
+          // 5. Inspection today
+          inspections.forEach(inspection => {
+            if (inspection.scheduledDate === today) {
+              const key = `inspection_${inspection.id}`;
+              if (!seen[key]) {
+                newAlerts.push({
+                  id: inspection.id + "_today",
+                  type: "inspection",
+                  title: `Inspection Today: ${inspection.propertyAddress}`,
+                  message: `Scheduled for ${inspection.inspector || "TBD"}`,
+                  severity: "info",
+                  module: "inspections",
+                  entityId: inspection.id,
+                  createdAt: now.toISOString()
+                });
+                seen[key] = true;
+              }
+            }
+          });
+
+          setAlerts(newAlerts);
+        };
+
+        generateAlerts();
+        const interval = setInterval(generateAlerts, 5 * 60 * 1000); // Every 5 minutes
+        return () => clearInterval(interval);
+      }, [salesLeads, serviceTickets, inspections, submissions, user, crmUsers]);
+
+      return alerts;
+    }
+
     // ─── ROLE SYSTEM (dynamic — Firestore-backed with hardcoded fallback) ───
-    const ALL_MODULES = ["daily_digest", "tasks", "directory", "inspections", "sales", "estimating", "production", "service", "finance", "reports", "catalog"];
-    const MODULE_LABELS = { daily_digest: "Daily Digest", tasks: "Task Manager", directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports" };
-    const MODULE_ICONS = { daily_digest: "📅", tasks: "✅", directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊" };
+    const ALL_MODULES = ["daily_digest", "directory", "inspections", "sales", "estimating", "production", "service", "finance", "reports", "calendar", "catalog"];
+    const MODULE_LABELS = { daily_digest: "Daily Digest", directory: "Directory", sales: "Project Sales", estimating: "Estimating", production: "Production", inspections: "Inspections", catalog: "Catalog", service: "Service", finance: "Finance", reports: "Reports", calendar: "Calendar" };
+    const MODULE_ICONS = { daily_digest: "📅", directory: "📇", sales: "💼", estimating: "📐", production: "🏗️", inspections: "🔍", catalog: "📦", service: "🔧", finance: "💰", reports: "📊", calendar: "📆" };
 
     const ROLE_PRESETS = {
       admin: { label: "Admin", modules: ALL_MODULES, color: "#E63946" },
-      estimator: { label: "Estimator", modules: ["daily_digest", "tasks", "directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
-      lead_estimator: { label: "Lead Estimator", modules: ["daily_digest", "tasks", "directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
-      coordinator: { label: "Coordinator", modules: ["daily_digest", "tasks", "directory", "sales", "production", "inspections", "service", "reports"], color: "#10B981" },
-      superintendent: { label: "Superintendent", modules: ["daily_digest", "tasks", "directory", "production", "inspections", "service"], color: "#F59E0B" },
+      estimator: { label: "Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog"], color: "#3B82F6" },
+      lead_estimator: { label: "Lead Estimator", modules: ["daily_digest", "directory", "sales", "estimating", "catalog", "production"], color: "#2563EB" },
+      coordinator: { label: "Coordinator", modules: ["daily_digest", "directory", "sales", "production", "inspections", "service", "reports", "calendar"], color: "#10B981" },
+      superintendent: { label: "Superintendent", modules: ["daily_digest", "directory", "production", "inspections", "service"], color: "#F59E0B" },
     };
     const ROLE_COLORS = { admin: "#E63946", estimator: "#3B82F6", lead_estimator: "#2563EB", coordinator: "#10B981", superintendent: "#F59E0B" };
 
@@ -166,6 +338,144 @@
       </svg>
     );
 
+    // ─── ACTIVITY TIMELINE COMPONENT ───────────────────────────
+    function ActivityTimeline({ activities = [], emails = [], documents = [], inspections = [] }) {
+      const timeline = useMemo(() => {
+        const items = [];
+        activities.forEach(a => items.push({ at: a.at, text: a.text || a.note, by: a.by, icon: "📝", source: "activity" }));
+        emails.forEach(e => items.push({ at: e.sentAt || e.receivedAt || e.at, text: `${e.direction === "inbound" ? "Received" : "Sent"}: ${e.subject}`, by: e.from || e.by, icon: e.direction === "inbound" ? "📨" : "📧", source: "email" }));
+        documents.forEach(d => items.push({ at: d.uploadedAt || d.at, text: `Document: ${d.name}`, by: d.uploadedBy || d.by, icon: "📎", source: "document" }));
+        inspections.forEach(i => items.push({ at: i.scheduledDate || i.createdAt, text: `Inspection: ${i.status} — ${i.inspector}`, by: i.inspector, icon: "🔍", source: "inspection" }));
+        return items.filter(i => i.at).sort((a, b) => new Date(b.at) - new Date(a.at));
+      }, [activities, emails, documents, inspections]);
+
+      if (!timeline.length) return React.createElement("div", { style: { padding: 20, textAlign: "center", color: C.gray400, fontSize: 13 } }, "No activity yet");
+
+      return React.createElement("div", null, timeline.map((item, i) =>
+        React.createElement("div", { key: i, style: { display: "flex", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.gray100}` } },
+          React.createElement("span", { style: { fontSize: 14, width: 24, textAlign: "center" } }, item.icon),
+          React.createElement("div", { style: { flex: 1 } },
+            React.createElement("div", { style: { fontSize: 12, color: C.navy } }, item.text),
+            React.createElement("div", { style: { fontSize: 10, color: C.gray400 } }, (item.by ? item.by + " · " : "") + new Date(item.at).toLocaleString())
+          )
+        )
+      ));
+    }
+
+    // ─── DUPLICATE DETECTION ───────────────────────────────────
+    function checkDuplicates(type, data, existingList) {
+      const matches = [];
+      if (type === "company") {
+        (existingList || []).forEach(c => {
+          if (!data.name || !c.name) return;
+          const nameMatch = c.name.toLowerCase().includes(data.name.toLowerCase().slice(0, 5));
+          const phoneMatch = c.phone && data.phone && c.phone.replace(/\D/g, "") === data.phone.replace(/\D/g, "");
+          if (nameMatch || phoneMatch) matches.push({ ...c, matchType: nameMatch ? "name" : "phone" });
+        });
+      }
+      if (type === "contact") {
+        (existingList || []).forEach(c => {
+          const emailMatch = c.email && data.email && c.email.toLowerCase() === data.email.toLowerCase();
+          const phoneMatch = c.phone && data.phone && c.phone.replace(/\D/g, "") === data.phone.replace(/\D/g, "");
+          const nameMatch = c.name && data.name && c.name.toLowerCase() === data.name.toLowerCase();
+          if (emailMatch || phoneMatch || nameMatch) matches.push({ ...c, matchType: emailMatch ? "email" : phoneMatch ? "phone" : "name" });
+        });
+      }
+      return matches;
+    }
+
+    function DuplicateWarning({ duplicates }) {
+      if (!duplicates || !duplicates.length) return null;
+      return React.createElement("div", { style: { padding: "10px 14px", borderRadius: 8, background: C.yellowBg, border: `1px solid ${C.yellow}40`, marginBottom: 12, fontSize: 12, color: "#92400E" } },
+        React.createElement("strong", null, "⚠️ Possible duplicates: "),
+        duplicates.map(d => d.name + " (" + d.matchType + ")").join(", ")
+      );
+    }
+
+    // ─── CSV IMPORTER ──────────────────────────────────────────
+    function CSVImporter({ type, onImport }) {
+      const fileRef = useRef(null);
+      const handleFile = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const rows = evt.target.result.split("\n").map(r => r.split(",").map(c => c.trim().replace(/^"|"$/g, "")));
+          const headers = rows[0].map(h => h.toLowerCase().replace(/\s+/g, ""));
+          const items = rows.slice(1).filter(r => r.length >= 2 && r.some(c => c)).map(r => {
+            const obj = {};
+            headers.forEach((h, i) => { obj[h] = r[i] || ""; });
+            return { ...obj, id: generateId(), createdAt: new Date().toISOString() };
+          });
+          if (items.length && confirm("Import " + items.length + " " + type + "s?")) onImport(items);
+        };
+        reader.readAsText(file);
+      };
+      return React.createElement(React.Fragment, null,
+        React.createElement("input", { ref: fileRef, type: "file", accept: ".csv", onChange: handleFile, style: { display: "none" } }),
+        React.createElement("button", { onClick: () => fileRef.current?.click(), style: { padding: "6px 14px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, color: C.gray600, fontSize: 11, fontWeight: 600, cursor: "pointer" } }, "📥 Import CSV")
+      );
+    }
+
+    // ─── DOCUMENT UPLOAD & LIST COMPONENTS ────────────────────────────
+    function DocumentUpload({ entityType, entityId, user, onUploaded }) {
+      const [uploading, setUploading] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const fileRef = useRef(null);
+      const handleUpload = async (file) => {
+        if (!firebaseStorage || !file) return;
+        setUploading(true);
+        const path = "documents/" + entityType + "/" + entityId + "/" + Date.now() + "_" + file.name;
+        const ref = firebaseStorage.ref(path);
+        const task = ref.put(file);
+        task.on("state_changed",
+          (snap) => setProgress(Math.round(snap.bytesTransferred / snap.totalBytes * 100)),
+          (err) => { console.error(err); setUploading(false); },
+          async () => {
+            const url = await task.snapshot.ref.getDownloadURL();
+            const doc = { id: generateId(), name: file.name, fileName: file.name, fileUrl: url, storagePath: path, fileSize: file.size, fileType: file.type, entityType, entityId, uploadedBy: user?.name || "Unknown", uploadedAt: new Date().toISOString(), category: "other", tags: [], notes: "" };
+            if (firestoreDb) await firestoreDb.collection("cr_documents").doc(doc.id).set(doc);
+            setUploading(false); setProgress(0);
+            if (onUploaded) onUploaded(doc);
+          }
+        );
+      };
+      return React.createElement("div", { style: { border: "2px dashed " + C.gray300, borderRadius: 8, padding: 20, textAlign: "center", cursor: "pointer", background: C.gray50 }, onClick: () => !uploading && fileRef.current?.click() },
+        React.createElement("input", { ref: fileRef, type: "file", onChange: (e) => e.target.files[0] && handleUpload(e.target.files[0]), style: { display: "none" } }),
+        uploading ? React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 12, color: C.navy, marginBottom: 8 } }, "Uploading... " + progress + "%"),
+          React.createElement("div", { style: { height: 4, borderRadius: 2, background: C.gray200 } },
+            React.createElement("div", { style: { height: 4, borderRadius: 2, background: C.blue, width: progress + "%", transition: "width 0.3s" } })
+          )
+        ) : React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 24, marginBottom: 4 } }, "📁"),
+          React.createElement("div", { style: { fontSize: 12, color: C.gray500 } }, "Click to upload a file")
+        )
+      );
+    }
+
+    function DocumentList({ entityType, entityId }) {
+      const [docs, setDocs] = useState([]);
+      useEffect(() => {
+        if (!firestoreDb) return;
+        const unsub = firestoreDb.collection("cr_documents").where("entityType", "==", entityType).where("entityId", "==", entityId).onSnapshot(snap => {
+          setDocs(snap.docs.map(d => d.data()).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt)));
+        });
+        return () => unsub();
+      }, [entityType, entityId]);
+      if (!docs.length) return React.createElement("div", { style: { padding: 16, textAlign: "center", color: C.gray400, fontSize: 12 } }, "No documents yet");
+      return React.createElement("div", { style: { display: "grid", gap: 8 } }, docs.map(d =>
+        React.createElement("div", { key: d.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid " + C.gray200, background: C.white, cursor: "pointer" }, onClick: () => window.open(d.fileUrl, "_blank") },
+          React.createElement("span", { style: { fontSize: 20 } }, d.fileType?.includes("pdf") ? "📄" : d.fileType?.includes("image") ? "🖼️" : "📁"),
+          React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, d.name),
+            React.createElement("div", { style: { fontSize: 10, color: C.gray400 } }, d.uploadedBy + " · " + new Date(d.uploadedAt).toLocaleDateString())
+          ),
+          React.createElement("span", { style: { fontSize: 10, color: C.gray400 } }, (d.fileSize / 1024).toFixed(0) + " KB")
+        )
+      ));
+    }
+
     // ─── LOGIN SCREEN ──────────────────────────────────────────
     function LoginScreen({ onSignIn, loading, error }) {
       const [animIn, setAnimIn] = useState(false);
@@ -194,6 +504,58 @@
             </div>
           </div>
         </div>
+      );
+    }
+
+    // ============================================================
+    // PROPOSAL GENERATOR COMPONENT
+    // ============================================================
+
+    function ProposalGenerator({ estimate, onGenerate, onCancel }) {
+      const [sowText, setSowText] = useState("");
+      const [systemName, setSystemName] = useState("");
+      const [includeWarranty, setIncludeWarranty] = useState(true);
+
+      const handleGenerate = () => {
+        const proposal = {
+          id: generateId(),
+          estimateId: estimate?.id,
+          type: "roofing_proposal",
+          systemName: systemName || "Standard Roofing System",
+          scope: sowText || "Standard roofing installation scope of work",
+          includeWarranty: includeWarranty,
+          generatedAt: new Date().toISOString(),
+          total: estimate?.totalPrice || 0,
+        };
+        if (onGenerate) onGenerate(proposal);
+      };
+
+      return React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }, onClick: onCancel },
+        React.createElement("div", { style: { width: 600, background: C.white, borderRadius: 12, padding: 24, maxHeight: "90vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+          React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 16px" } }, "Generate Proposal"),
+          React.createElement("div", { style: { display: "grid", gap: 12 } },
+            React.createElement("div", null,
+              React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "System Name"),
+              React.createElement("input", { type: "text", value: systemName, onChange: e => setSystemName(e.target.value), placeholder: "e.g., Premium Architectural Shingles", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } })
+            ),
+            React.createElement("div", null,
+              React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Scope of Work"),
+              React.createElement("textarea", { value: sowText, onChange: e => setSowText(e.target.value), placeholder: "Describe the scope of work and specifications...", style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 120 } })
+            ),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+              React.createElement("input", { type: "checkbox", checked: includeWarranty, onChange: e => setIncludeWarranty(e.target.checked), style: { width: 16, height: 16, cursor: "pointer" } }),
+              React.createElement("label", { style: { fontSize: 12, color: C.gray600, cursor: "pointer" } }, "Include Warranty Information")
+            ),
+            React.createElement("div", { style: { padding: 12, borderRadius: 8, background: C.gray50 } },
+              React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 4 } }, "Estimate Total"),
+              React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: C.navy } }, formatCurrency(estimate?.totalPrice || 0))
+            ),
+            React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+              React.createElement("button", { onClick: onCancel, style: { padding: "8px 16px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, fontSize: 12, cursor: "pointer" } }, "Cancel"),
+              React.createElement("button", { onClick: handleGenerate, style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Generate Proposal")
+            )
+          )
+        )
       );
     }
 
@@ -1233,6 +1595,173 @@
     // ============================================================
     // MODULE: PRODUCTION (placeholder — full code in Phase 2)
     // ============================================================
+
+    // ============================================================
+    // CREW MANAGEMENT COMPONENT
+    // ============================================================
+
+    function CrewManagement({ user, role }) {
+      const [crews, setCrews, crewsLoaded] = useFirestoreCollection("cr_crews", []);
+      const [showForm, setShowForm] = useState(false);
+      const [formData, setFormData] = useState({ name: "", type: "internal", leadName: "", leadPhone: "", market: "ATL", specialty: "shingle", dailyRate: 0, status: "available", members: [], notes: "" });
+
+      const handleSave = () => {
+        const crew = { ...formData, id: generateId(), createdAt: new Date().toISOString() };
+        setCrews(prev => [...prev, crew]);
+        setShowForm(false);
+        setFormData({ name: "", type: "internal", leadName: "", leadPhone: "", market: "ATL", specialty: "shingle", dailyRate: 0, status: "available", members: [], notes: "" });
+      };
+
+      const statusColors = { available: C.green, assigned: C.yellow, unavailable: C.red };
+
+      return React.createElement("div", { style: { padding: 24 } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+          React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: C.navy, margin: 0 } }, "Crew Management"),
+          React.createElement("button", { onClick: () => setShowForm(true), style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "+ Add Crew")
+        ),
+        crews.length ? React.createElement("div", { style: { display: "grid", gap: 8 } }, crews.map(c =>
+          React.createElement("div", { key: c.id, style: { padding: "14px 18px", borderRadius: 10, border: "1px solid " + C.gray200, background: C.white, display: "flex", alignItems: "center", gap: 14 } },
+            React.createElement("div", { style: { width: 10, height: 10, borderRadius: 5, background: statusColors[c.status] || C.gray400, flexShrink: 0 } }),
+            React.createElement("div", { style: { flex: 1 } },
+              React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.navy } }, c.name),
+              React.createElement("div", { style: { fontSize: 11, color: C.gray500 } }, c.type + " · " + c.specialty + " · " + c.market + (c.leadName ? " · Lead: " + c.leadName : ""))
+            ),
+            React.createElement("span", { style: { padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, background: (statusColors[c.status] || C.gray400) + "20", color: statusColors[c.status] || C.gray400 } }, c.status),
+            c.dailyRate ? React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: C.navy } }, formatCurrency(c.dailyRate) + "/day") : null
+          )
+        )) : React.createElement("div", { style: { padding: 32, textAlign: "center", color: C.gray400, fontSize: 13 } }, "No crews added yet"),
+        showForm ? React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }, onClick: () => setShowForm(false) },
+          React.createElement("div", { style: { width: 480, background: C.white, borderRadius: 12, padding: 24 }, onClick: e => e.stopPropagation() },
+            React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 16px" } }, "Add Crew"),
+            React.createElement("div", { style: { display: "grid", gap: 12 } },
+              ["name", "leadName", "leadPhone"].map(f =>
+                React.createElement("div", { key: f },
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, f.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase())),
+                  React.createElement("input", { value: formData[f], onChange: e => setFormData({...formData, [f]: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } })
+                )
+              ),
+              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 } },
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Type"),
+                  React.createElement("select", { value: formData.type, onChange: e => setFormData({...formData, type: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } },
+                    React.createElement("option", { value: "internal" }, "Internal"),
+                    React.createElement("option", { value: "subcontractor" }, "Subcontractor")
+                  )
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Market"),
+                  React.createElement("select", { value: formData.market, onChange: e => setFormData({...formData, market: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } },
+                    ["ATL", "TPA", "DFW"].map(m => React.createElement("option", { key: m, value: m }, m))
+                  )
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Specialty"),
+                  React.createElement("select", { value: formData.specialty, onChange: e => setFormData({...formData, specialty: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } },
+                    ["shingle", "tpo", "tile", "metal", "gutters", "general"].map(s => React.createElement("option", { key: s, value: s }, s))
+                  )
+                )
+              ),
+              React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+                React.createElement("button", { onClick: () => setShowForm(false), style: { padding: "8px 16px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, fontSize: 12, cursor: "pointer" } }, "Cancel"),
+                React.createElement("button", { onClick: handleSave, style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Save Crew")
+              )
+            )
+          )
+        ) : null
+      );
+    }
+
+    // ============================================================
+    // CHANGE ORDER TRACKING COMPONENT
+    // ============================================================
+
+    function ChangeOrderPanel({ project, onUpdateProject, user, role }) {
+      const [showForm, setShowForm] = useState(false);
+      const [formData, setFormData] = useState({ description: "", reason: "scope_change", amount: 0, costImpact: 0, notes: "" });
+      const changeOrders = project?.changeOrders || [];
+      const approvedTotal = changeOrders.filter(co => co.status === "approved").reduce((s, co) => s + (co.amount || 0), 0);
+      const pendingCount = changeOrders.filter(co => co.status === "pending_approval").length;
+
+      const handleCreate = () => {
+        const co = { id: generateId(), number: "CO-" + String(changeOrders.length + 1).padStart(3, "0"), ...formData, status: "pending_approval", requestedBy: user.name, requestDate: new Date().toISOString(), approvedBy: null, approvalDate: null };
+        onUpdateProject({ ...project, changeOrders: [...changeOrders, co] });
+        setShowForm(false);
+        setFormData({ description: "", reason: "scope_change", amount: 0, costImpact: 0, notes: "" });
+      };
+
+      const handleApprove = (coId) => {
+        const updated = changeOrders.map(co => co.id === coId ? { ...co, status: "approved", approvedBy: user.name, approvalDate: new Date().toISOString() } : co);
+        const newApprovedTotal = updated.filter(co => co.status === "approved").reduce((s, co) => s + (co.amount || 0), 0);
+        const origContract = project.originalContractValue || project.contractValue || 0;
+        onUpdateProject({ ...project, changeOrders: updated, originalContractValue: origContract, contractValue: origContract + newApprovedTotal });
+      };
+
+      const reasons = { scope_change: "Scope Change", client_request: "Client Request", unforeseen_conditions: "Unforeseen Conditions", material_change: "Material Change", weather_damage: "Weather Damage", code_requirement: "Code Requirement", other: "Other" };
+      const statusColors = { draft: C.gray400, pending_approval: C.yellow, approved: C.green, rejected: C.red };
+
+      return React.createElement("div", null,
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 } },
+          React.createElement("div", { style: { padding: 12, borderRadius: 8, background: C.gray50, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: C.navy } }, changeOrders.length),
+            React.createElement("div", { style: { fontSize: 10, color: C.gray500 } }, "Total COs")
+          ),
+          React.createElement("div", { style: { padding: 12, borderRadius: 8, background: approvedTotal >= 0 ? C.greenBg : C.redBg, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: approvedTotal >= 0 ? C.green : C.red } }, formatCurrency(approvedTotal)),
+            React.createElement("div", { style: { fontSize: 10, color: C.gray500 } }, "Net Impact")
+          ),
+          React.createElement("div", { style: { padding: 12, borderRadius: 8, background: C.yellowBg, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: C.yellow } }, pendingCount),
+            React.createElement("div", { style: { fontSize: 10, color: C.gray500 } }, "Pending Approval")
+          )
+        ),
+        React.createElement("button", { onClick: () => setShowForm(true), style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 16 } }, "+ New Change Order"),
+        changeOrders.length ? changeOrders.map(co =>
+          React.createElement("div", { key: co.id, style: { padding: "12px 16px", borderRadius: 8, border: "1px solid " + C.gray200, background: C.white, marginBottom: 8 } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+              React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.navy } }, co.number + ": " + co.description),
+              React.createElement("span", { style: { padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: (statusColors[co.status] || C.gray400) + "20", color: statusColors[co.status] || C.gray400 } }, co.status?.replace("_", " "))
+            ),
+            React.createElement("div", { style: { fontSize: 11, color: C.gray500, marginBottom: 4 } }, "Reason: " + (reasons[co.reason] || co.reason) + " · Amount: " + formatCurrency(co.amount || 0) + " · Requested by " + co.requestedBy),
+            co.status === "pending_approval" && (role === "admin" || role === "coordinator") ?
+              React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+                React.createElement("button", { onClick: () => handleApprove(co.id), style: { padding: "4px 12px", borderRadius: 4, border: "none", background: C.green, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer" } }, "✓ Approve"),
+                React.createElement("button", { onClick: () => { const updated = changeOrders.map(c => c.id === co.id ? { ...c, status: "rejected" } : c); onUpdateProject({ ...project, changeOrders: updated }); }, style: { padding: "4px 12px", borderRadius: 4, border: "none", background: C.red, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer" } }, "✕ Reject")
+              ) : null
+          )
+        ) : React.createElement("div", { style: { padding: 16, textAlign: "center", color: C.gray400, fontSize: 12 } }, "No change orders yet"),
+        showForm ? React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(17,29,53,0.6)" }, onClick: () => setShowForm(false) },
+          React.createElement("div", { style: { width: 480, background: C.white, borderRadius: 12, padding: 24 }, onClick: e => e.stopPropagation() },
+            React.createElement("h3", { style: { fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 16px" } }, "New Change Order"),
+            React.createElement("div", { style: { display: "grid", gap: 12 } },
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Description"),
+                React.createElement("textarea", { value: formData.description, onChange: e => setFormData({...formData, description: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 60 } })
+              ),
+              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Reason"),
+                  React.createElement("select", { value: formData.reason, onChange: e => setFormData({...formData, reason: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } },
+                    Object.entries(reasons).map(([k, v]) => React.createElement("option", { key: k, value: k }, v))
+                  )
+                ),
+                React.createElement("div", null,
+                  React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Amount ($)"),
+                  React.createElement("input", { type: "number", value: formData.amount, onChange: e => setFormData({...formData, amount: parseFloat(e.target.value) || 0}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12 } })
+                )
+              ),
+              React.createElement("div", null,
+                React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: C.gray600, display: "block", marginBottom: 4 } }, "Notes"),
+                React.createElement("textarea", { value: formData.notes, onChange: e => setFormData({...formData, notes: e.target.value}), style: { width: "100%", padding: 8, borderRadius: 6, border: "1px solid " + C.gray300, fontSize: 12, minHeight: 40 } })
+              ),
+              React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+                React.createElement("button", { onClick: () => setShowForm(false), style: { padding: "8px 16px", borderRadius: 6, border: "1px solid " + C.gray300, background: C.white, fontSize: 12, cursor: "pointer" } }, "Cancel"),
+                React.createElement("button", { onClick: handleCreate, style: { padding: "8px 16px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Create Change Order")
+              )
+            )
+          )
+        ) : null
+      );
+    }
 
     // ============================================================
     // MODULE: PRODUCTION — Full Components
@@ -3685,11 +4214,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           if (skipNextSync.current) { skipNextSync.current = false; return; }
           if (snap.exists) {
             const items = snap.data().items;
-            if (items) {
-              setData(items);
-              // Sync Firestore data to localStorage so DailyDigest and TaskManager pick it up
-              try { localStorage.setItem(collectionName, JSON.stringify(items)); } catch(e) {}
-            }
+            if (items) setData(items);
           }
           setLoaded(true);
         }, err => {
@@ -5412,9 +5937,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
       // "this monday", "this friday", etc.
       const thisDayMatch = lower.match(/\bthis\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
       if (thisDayMatch) { const target = dayNames.indexOf(thisDayMatch[1]); const d = new Date(today); const diff = (target - d.getDay() + 7) % 7; if (diff > 0) { d.setDate(d.getDate() + diff); return d.toISOString().split("T")[0]; } }
-      // bare day name: "tuesday", "on tuesday", "call tuesday", "call on tuesday"
-      const bareDayMatch = lower.match(/\b(?:on\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
-      if (bareDayMatch) { const target = dayNames.indexOf(bareDayMatch[1]); const d = new Date(today); const diff = (target - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + diff); return d.toISOString().split("T")[0]; }
       // "in X days"
       const inDaysMatch = lower.match(/\bin\s+(\d+)\s+days?\b/);
       if (inDaysMatch) { const d = new Date(today); d.setDate(d.getDate() + parseInt(inDaysMatch[1])); return d.toISOString().split("T")[0]; }
@@ -5723,6 +6245,98 @@ Extract every identifiable expense. Use the most specific category possible. If 
             </div>
           </div>
         </div>
+      );
+    }
+
+    // ============================================================
+    // COMPONENT: INSPECTION PHOTOS
+    // ============================================================
+    function InspectionPhotos({ inspection, onUpdate, user }) {
+      const [uploading, setUploading] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const fileRef = useRef(null);
+      const photos = inspection?.photos || [];
+
+      const handleUpload = async (files) => {
+        if (!files.length) return;
+        setUploading(true);
+        const newPhotos = [];
+        for (const file of files) {
+          try {
+            if (firebaseStorage) {
+              const path = "inspections/" + inspection.id + "/" + Date.now() + "_" + file.name;
+              const ref = firebaseStorage.ref(path);
+              await ref.put(file);
+              const url = await ref.getDownloadURL();
+              newPhotos.push({
+                id: generateId(),
+                url,
+                storagePath: path,
+                caption: "",
+                location: "",
+                category: "general",
+                takenAt: new Date().toISOString(),
+                takenBy: user?.name || ""
+              });
+            } else {
+              // Fallback: use local data URL
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                newPhotos.push({
+                  id: generateId(),
+                  url: ev.target.result,
+                  caption: "",
+                  location: "",
+                  category: "general",
+                  takenAt: new Date().toISOString(),
+                  takenBy: user?.name || ""
+                });
+                if (newPhotos.length === files.length) {
+                  setUploading(false);
+                  setProgress(0);
+                  onUpdate({ ...inspection, photos: [...photos, ...newPhotos] });
+                }
+              };
+              reader.readAsDataURL(file);
+            }
+          } catch (e) {
+            console.error("Photo upload error:", e);
+          }
+        }
+        if (firebaseStorage) {
+          setUploading(false);
+          setProgress(0);
+          onUpdate({ ...inspection, photos: [...photos, ...newPhotos] });
+        }
+      };
+
+      const removePhoto = (id) => {
+        onUpdate({ ...inspection, photos: photos.filter(p => p.id !== id) });
+      };
+
+      const updatePhotoCaption = (id, caption) => {
+        onUpdate({ ...inspection, photos: photos.map(p => p.id === id ? { ...p, caption } : p) });
+      };
+
+      return React.createElement("div", null,
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+          React.createElement("h4", { style: { fontSize: 14, fontWeight: 700, color: C.navy, margin: 0 } }, "📷 Photos (" + photos.length + ")"),
+          React.createElement("div", null,
+            React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, onChange: e => handleUpload(Array.from(e.target.files || [])), style: { display: "none" } }),
+            React.createElement("button", { onClick: () => fileRef.current?.click(), disabled: uploading, style: { padding: "6px 14px", borderRadius: 6, border: "none", background: uploading ? C.gray300 : C.navy, color: C.white, fontSize: 11, fontWeight: 600, cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.6 : 1 } }, uploading ? "Uploading..." : "Add Photos")
+          )
+        ),
+        photos.length ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 } }, photos.map(p =>
+          React.createElement("div", { key: p.id, style: { borderRadius: 8, overflow: "hidden", border: "1px solid " + C.gray200, background: C.white, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" } },
+            React.createElement("img", { src: p.url, alt: p.caption || "Photo", style: { width: "100%", height: 100, objectFit: "cover" } }),
+            React.createElement("div", { style: { padding: "6px 8px" } },
+              React.createElement("input", { value: p.caption || "", onChange: e => updatePhotoCaption(p.id, e.target.value), placeholder: "Caption", style: { width: "100%", fontSize: 10, padding: "3px 4px", border: "1px solid " + C.gray200, borderRadius: 4, marginBottom: 4 } }),
+              React.createElement("div", { style: { fontSize: 9, color: C.gray500 } }, p.category || "general"),
+              React.createElement("div", { style: { fontSize: 9, color: C.gray400, marginBottom: 4 } }, new Date(p.takenAt).toLocaleDateString()),
+              React.createElement("button", { onClick: () => removePhoto(p.id), style: { width: "100%", padding: "3px", fontSize: 9, background: C.redBg, color: C.red, border: "none", borderRadius: 4, cursor: "pointer" } }, "Remove")
+            )
+          )
+        )) : React.createElement("div", { style: { padding: 24, textAlign: "center", color: C.gray400, fontSize: 12, border: "2px dashed " + C.gray300, borderRadius: 8, background: C.gray50 } }, "No photos yet — click Add Photos to upload")
       );
     }
 
@@ -6229,135 +6843,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     // MODULE: DAILY DIGEST
     // ============================================================
-    function TaskManagerModule({ user, role, crmUsers }) {
-      const isManagerOrAdmin = role === "admin" || role === "owner" || role === "manager" || role === "lead_estimator";
-      const [viewUser, setViewUser] = useState(user.name);
-      const [filterStatus, setFilterStatus] = useState("active"); // active, completed, all
-
-      // Gather all tasks across all objects
-      const allTaskKeys = Object.keys(localStorage).filter(k => k.startsWith("cr_tasks_"));
-      const allTasks = [];
-      allTaskKeys.forEach(key => {
-        try {
-          const tasks = JSON.parse(localStorage.getItem(key) || "[]");
-          tasks.forEach(t => { allTasks.push({ ...t, source: key.replace("cr_tasks_", ""), _storageKey: key }); });
-        } catch(e) {}
-      });
-
-      // Filter by user
-      const userTasks = viewUser === "__all__" ? allTasks : allTasks.filter(t => t.assignee === viewUser || (!t.assignee && t.createdBy === viewUser));
-
-      // Filter by status
-      const filteredTasks = filterStatus === "active" ? userTasks.filter(t => !t.completed) :
-        filterStatus === "completed" ? userTasks.filter(t => t.completed) : userTasks;
-
-      // Sort: overdue first, then by due date, then no-date last
-      const today = new Date().toISOString().split("T")[0];
-      const sorted = [...filteredTasks].sort((a, b) => {
-        if (!a.dueDate && !b.dueDate) return 0;
-        if (!a.dueDate) return 1;
-        if (!b.dueDate) return -1;
-        return a.dueDate.localeCompare(b.dueDate);
-      });
-
-      const overdue = sorted.filter(t => t.dueDate && t.dueDate < today && !t.completed);
-      const todayTasks = sorted.filter(t => t.dueDate === today && !t.completed);
-      const upcoming = sorted.filter(t => t.dueDate && t.dueDate > today && !t.completed);
-      const noDueDate = sorted.filter(t => !t.dueDate && !t.completed);
-      const completed = sorted.filter(t => t.completed);
-
-      // Get unique team members for filter
-      const teamMembers = [...new Set(allTasks.map(t => t.assignee).filter(Boolean))].sort();
-
-      const toggleComplete = (task) => {
-        try {
-          const existing = JSON.parse(localStorage.getItem(task._storageKey) || "[]");
-          const updated = existing.map(t => t.id === task.id ? { ...t, completed: !t.completed, completedAt: !t.completed ? new Date().toISOString() : null } : t);
-          localStorage.setItem(task._storageKey, JSON.stringify(updated));
-          if (firestoreDb) { firestoreDb.collection("kv").doc(task._storageKey).set({ value: JSON.stringify(updated) }); }
-          window.location.reload();
-        } catch(e) {}
-      };
-
-      const formatSource = (src) => {
-        if (!src) return "";
-        const parts = src.split("_");
-        if (parts.length >= 2) return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
-        return src;
-      };
-
-      const TaskItem = ({ t }) => {
-        const isOverdue = t.dueDate && t.dueDate < today && !t.completed;
-        return (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, background: t.completed ? C.gray50 : C.white }}>
-            <input type="checkbox" checked={!!t.completed} onChange={() => toggleComplete(t)} style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.red }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: t.completed ? C.gray400 : C.navy, textDecoration: t.completed ? "line-through" : "none" }}>{t.title}</div>
-              <div style={{ display: "flex", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
-                {t.dueDate && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "#FEE2E2" : "#EFF6FF", color: isOverdue ? C.red : C.blue, fontWeight: 600 }}>{isOverdue ? "⚠ " : ""}{t.dueDate}</span>}
-                {t.assignee && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: C.gray100, color: C.gray600 }}>👤 {t.assignee}</span>}
-                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: C.gray100, color: C.gray500 }}>📁 {formatSource(t.source)}</span>
-              </div>
-            </div>
-          </div>
-        );
-      };
-
-      const SectionBlock = ({ title, icon, tasks, color, borderColor }) => tasks.length > 0 ? (
-        <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `2px solid ${borderColor || C.gray300}` }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: color || C.navy }}>{icon} {title} ({tasks.length})</span>
-          </div>
-          {tasks.map(t => <TaskItem key={t.id + t._storageKey} t={t} />)}
-        </div>
-      ) : null;
-
-      return (
-        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
-          <div style={{ marginBottom: 20 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 800, color: C.navy, margin: 0 }}>✅ Task Manager</h2>
-            <p style={{ fontSize: 12, color: C.gray500, margin: "4px 0 0" }}>View and manage tasks across all objects</p>
-          </div>
-
-          {/* Filters */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
-            {isManagerOrAdmin && (
-              <select value={viewUser} onChange={e => setViewUser(e.target.value)} style={{ padding: "7px 12px", borderRadius: 6, border: `1px solid ${C.gray300}`, fontSize: 12, color: C.navy, background: C.white }}>
-                <option value={user.name}>My Tasks</option>
-                <option value="__all__">All Team Tasks</option>
-                {teamMembers.filter(m => m !== user.name).map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            )}
-            <div style={{ display: "flex", borderRadius: 6, border: `1px solid ${C.gray300}`, overflow: "hidden" }}>
-              {[["active", "Active"], ["completed", "Completed"], ["all", "All"]].map(([val, label]) => (
-                <button key={val} onClick={() => setFilterStatus(val)} style={{ padding: "7px 14px", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", background: filterStatus === val ? C.navy : C.white, color: filterStatus === val ? C.white : C.gray600 }}>{label}</button>
-              ))}
-            </div>
-            <div style={{ marginLeft: "auto", fontSize: 12, color: C.gray500, fontWeight: 600 }}>{filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}</div>
-          </div>
-
-          {/* Task Sections */}
-          {filterStatus !== "completed" && (
-            <>
-              <SectionBlock title="Overdue" icon="⚠" tasks={overdue} color={C.red} borderColor={C.red} />
-              <SectionBlock title="Due Today" icon="📋" tasks={todayTasks} color={C.navy} borderColor={C.blue} />
-              <SectionBlock title="Upcoming" icon="📆" tasks={upcoming} color={C.navy} borderColor={C.blue} />
-              <SectionBlock title="No Due Date" icon="📌" tasks={noDueDate} color={C.gray500} borderColor={C.gray300} />
-            </>
-          )}
-          {filterStatus !== "active" && completed.length > 0 && (
-            <SectionBlock title="Completed" icon="✓" tasks={completed} color={C.green} borderColor={C.green} />
-          )}
-          {filteredTasks.length === 0 && (
-            <div style={{ background: C.white, borderRadius: 10, padding: 40, textAlign: "center", border: `1px solid ${C.gray200}` }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🎉</div>
-              <div style={{ fontSize: 14, color: C.gray500, fontWeight: 600 }}>No tasks found</div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
     function DailyDigestModule({ user, role, entities, salesLeads, serviceTickets, inspections, crmUsers }) {
       const today = new Date().toISOString().split("T")[0];
       const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -6383,7 +6868,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const todayTasks = myTasks.filter(t => t.dueDate === today);
       const overdueTasks = myTasks.filter(t => t.dueDate && t.dueDate < today);
       const upcomingTasks = myTasks.filter(t => t.dueDate && t.dueDate > today && t.dueDate <= new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]);
-      const noDueDateTasks = myTasks.filter(t => !t.dueDate);
 
       // Today's inspections for this user
       const myInspections = (inspections || []).filter(insp => {
@@ -6585,14 +7069,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>📆 Upcoming This Week ({upcomingTasks.length})</span>
                 </div>
                 {upcomingTasks.map(t => <TaskRow key={t.id} t={t} />)}
-              </div>
-            )}
-            {noDueDateTasks.length > 0 && (
-              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 16, overflow: "hidden" }}>
-                <div style={{ padding: "12px 16px", borderBottom: `2px solid ${C.gray300}` }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.gray500 }}>📌 No Due Date ({noDueDateTasks.length})</span>
-                </div>
-                {noDueDateTasks.map(t => <TaskRow key={t.id} t={t} />)}
               </div>
             )}
           </div>
@@ -6836,6 +7312,212 @@ Extract every identifiable expense. Use the most specific category possible. If 
     }
 
     // ============================================================
+    // CHART HELPERS: Canvas-based chart components
+    // ============================================================
+    function BarChart({ data, width = 500, height = 250, barColor = C.navy }) {
+      const canvasRef = useRef(null);
+      useEffect(() => {
+        const ctx = canvasRef.current?.getContext("2d");
+        if (!ctx || !data.length) return;
+        ctx.clearRect(0, 0, width, height);
+        const max = Math.max(...data.map(d => d.value), 1);
+        const barW = Math.min(40, (width - 60) / data.length - 8);
+        data.forEach((d, i) => {
+          const barH = (d.value / max) * (height - 50);
+          const x = 50 + i * (barW + 8);
+          const y = height - 30 - barH;
+          ctx.fillStyle = d.color || barColor;
+          ctx.fillRect(x, y, barW, barH);
+          ctx.fillStyle = C.gray500;
+          ctx.font = "10px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(d.label || "", x + barW / 2, height - 14);
+          ctx.fillText(d.displayValue || String(d.value), x + barW / 2, y - 6);
+        });
+      }, [data, width, height, barColor]);
+      return React.createElement("canvas", { ref: canvasRef, width, height, style: { borderRadius: 8, background: C.white } });
+    }
+
+    function DonutChart({ data, size = 180, label = "" }) {
+      const canvasRef = useRef(null);
+      useEffect(() => {
+        const ctx = canvasRef.current?.getContext("2d");
+        if (!ctx) return;
+        ctx.clearRect(0, 0, size, size);
+        const total = data.reduce((s, d) => s + d.value, 0) || 1;
+        const cx = size / 2, cy = size / 2, r = size / 2 - 10, innerR = r * 0.6;
+        let angle = -Math.PI / 2;
+        data.forEach(d => {
+          const slice = (d.value / total) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, angle, angle + slice);
+          ctx.arc(cx, cy, innerR, angle + slice, angle, true);
+          ctx.closePath();
+          ctx.fillStyle = d.color;
+          ctx.fill();
+          angle += slice;
+        });
+        ctx.fillStyle = C.navy;
+        ctx.font = "bold 16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, cx, cy);
+      }, [data, size, label]);
+      return React.createElement("canvas", { ref: canvasRef, width: size, height: size });
+    }
+
+    // ============================================================
+    // MODULE: CALENDAR (Multi-source event aggregation)
+    // ============================================================
+    function CalendarModule({ user, role, entities, salesLeads = [], serviceTickets = [], inspections = [] }) {
+      const [currentMonth, setCurrentMonth] = useState(new Date());
+      const [selectedDay, setSelectedDay] = useState(null);
+      const [filters, setFilters] = useState({ bids: true, inspections: true, service: true });
+
+      const events = useMemo(() => {
+        const evts = [];
+        if (filters.bids) {
+          salesLeads.filter(l => l.bidDueDate).forEach(l => {
+            evts.push({ date: l.bidDueDate, title: l.company || l.jobName || "Bid Due", type: "bid", color: "#F59E0B", module: "sales", entityId: l.id });
+          });
+        }
+        if (filters.inspections) {
+          inspections.filter(i => i.scheduledDate).forEach(i => {
+            evts.push({ date: i.scheduledDate, title: `Inspection: ${i.inspector || "TBD"}`, type: "inspection", color: "#3B82F6", module: "inspections", entityId: i.id });
+          });
+        }
+        if (filters.service) {
+          serviceTickets.filter(t => t.scheduledDate).forEach(t => {
+            evts.push({ date: t.scheduledDate, title: t.subject || "Service", type: "service", color: "#EF4444", module: "service", entityId: t.id });
+          });
+        }
+        return evts;
+      }, [salesLeads, serviceTickets, inspections, filters]);
+
+      const year = currentMonth.getFullYear();
+      const month = currentMonth.getMonth();
+      const firstDay = new Date(year, month, 1).getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const today = new Date().toISOString().split("T")[0];
+      const monthName = currentMonth.toLocaleString("default", { month: "long", year: "numeric" });
+
+      const days = [];
+      for (let i = 0; i < firstDay; i++) days.push(null);
+      for (let d = 1; d <= daysInMonth; d++) days.push(d);
+
+      const getEventsForDay = (day) => {
+        if (!day) return [];
+        const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        return events.filter(e => e.date && e.date.startsWith(dateStr));
+      };
+
+      const selectedDayEvents = selectedDay ? getEventsForDay(selectedDay) : [];
+
+      return (
+        <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
+          <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
+            <h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: "0 0 8px" }}>Calendar</h1>
+            <p style={{ fontSize: 14, color: C.gray500, margin: "0 0 24px" }}>Track bids, inspections, and service appointments across all clients</p>
+
+            {/* Controls: Month nav + filters */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, background: C.white, padding: 16, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <button onClick={() => setCurrentMonth(d => new Date(d.getFullYear(), d.getMonth() - 1))} style={{ padding: "6px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, background: C.white, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.navy }}>← Prev</button>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.navy, minWidth: 180, textAlign: "center" }}>{monthName}</div>
+                <button onClick={() => setCurrentMonth(d => new Date(d.getFullYear(), d.getMonth() + 1))} style={{ padding: "6px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, background: C.white, cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.navy }}>Next →</button>
+              </div>
+              <button onClick={() => setCurrentMonth(new Date())} style={{ padding: "6px 14px", border: `1px solid ${C.navy}`, borderRadius: 6, background: C.navy, color: C.white, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Today</button>
+            </div>
+
+            {/* Filter checkboxes */}
+            <div style={{ display: "flex", gap: 20, marginBottom: 24 }}>
+              {[
+                { key: "bids", label: "Bid Due Dates", color: "#F59E0B" },
+                { key: "inspections", label: "Inspections", color: "#3B82F6" },
+                { key: "service", label: "Service Dispatch", color: "#EF4444" }
+              ].map(f => (
+                <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 500, color: C.navy }}>
+                  <input type="checkbox" checked={filters[f.key]} onChange={e => setFilters(prev => ({ ...prev, [f.key]: e.target.checked }))} style={{ cursor: "pointer" }} />
+                  <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 2, background: f.color }}></span>
+                  {f.label}
+                </label>
+              ))}
+            </div>
+
+            {/* Calendar grid */}
+            <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 16, marginBottom: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1, background: C.gray200, padding: 1 }}>
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => (
+                  <div key={d} style={{ padding: 12, textAlign: "center", fontWeight: 700, fontSize: 11, color: C.gray500, background: C.gray50, textTransform: "uppercase" }}>{d}</div>
+                ))}
+                {days.map((day, idx) => {
+                  const dayEvents = getEventsForDay(day);
+                  const dateStr = day ? `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : "";
+                  const isToday = dateStr === today;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => day && setSelectedDay(day)}
+                      style={{
+                        padding: 12,
+                        minHeight: 120,
+                        background: C.white,
+                        border: isToday ? `3px solid ${C.red}` : `1px solid ${C.gray100}`,
+                        borderRadius: 6,
+                        cursor: day ? "pointer" : "default",
+                        transition: "background 0.2s",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6
+                      }}
+                      onMouseEnter={e => day && (e.currentTarget.style.background = C.gray50)}
+                      onMouseLeave={e => e.currentTarget.style.background = C.white}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, color: day ? C.navy : C.gray200 }}>{day}</div>
+                      {dayEvents.slice(0, 3).map((evt, i) => (
+                        <div key={i} style={{ padding: "3px 6px", borderRadius: 4, background: evt.color + "20", fontSize: 10, color: evt.color, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {evt.title}
+                        </div>
+                      ))}
+                      {dayEvents.length > 3 && <div style={{ fontSize: 9, color: C.gray400, fontWeight: 600 }}>+{dayEvents.length - 3} more</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Selected day detail panel */}
+            {selectedDay && (
+              <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <h2 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>
+                    {new Date(year, month, selectedDay).toLocaleDateString("default", { weekday: "long", month: "long", day: "numeric" })}
+                  </h2>
+                  <button onClick={() => setSelectedDay(null)} style={{ padding: "6px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, background: C.white, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.gray600 }}>Close</button>
+                </div>
+                {selectedDayEvents.length === 0 ? (
+                  <p style={{ color: C.gray400, fontSize: 13 }}>No events scheduled for this day.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {selectedDayEvents.map((evt, i) => (
+                      <div key={i} style={{ padding: 12, borderRadius: 8, border: `2px solid ${evt.color}20`, background: evt.color + "10" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: evt.color }}></span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{evt.title}</span>
+                          <span style={{ fontSize: 11, color: C.gray500 }}>({evt.type})</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
     // MODULE: REPORTS (Cross-module reporting)
     // ============================================================
     function ReportsModule({ user, role, entities, salesLeads, serviceTickets }) {
@@ -6844,6 +7526,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const tickets = serviceTickets || [];
       const [reportType, setReportType] = useState("company");
       const [search, setSearch] = useState("");
+      const [reportTab, setReportTab] = useState("table");
+      const [dateRange, setDateRange] = useState("all");
 
       const buildRows = () => {
         if (reportType === "company") {
@@ -6860,6 +7544,31 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const totalWon = leads.filter(l => l.stage === "awarded").reduce((s, l) => s + (l.estimatedValue || 0), 0);
       const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status)).length;
 
+      // Chart data calculations
+      const stageGroups = ["discovery", "proposal", "negotiation", "awarded", "closed_lost"];
+      const pipelineData = stageGroups.map(stage => {
+        const value = leads.filter(l => l.stage === stage && !["awarded", "closed_lost"].includes(l.stage)).length;
+        return { label: stage.replace(/_/g, " "), value, displayValue: value, color: { discovery: C.blue, proposal: C.navy, negotiation: "#8B5CF6", awarded: C.green, closed_lost: C.red }[stage] || C.gray400 };
+      }).filter(d => d.value > 0);
+
+      const marketLeadData = ["ATL", "TPA", "DFW"].map(market => ({
+        label: market,
+        value: leads.filter(l => {
+          const comp = companies.find(c => c.id === l.companyId);
+          return comp?.market === market && !["awarded", "closed_lost"].includes(l.stage);
+        }).length,
+        displayValue: leads.filter(l => {
+          const comp = companies.find(c => c.id === l.companyId);
+          return comp?.market === market && !["awarded", "closed_lost"].includes(l.stage);
+        }).length,
+        color: market === "ATL" ? "#3B82F6" : market === "TPA" ? "#10B981" : "#F59E0B"
+      }));
+
+      const ticketPriorityData = ["high", "medium", "low"].map(priority => {
+        const count = tickets.filter(t => t.priority === priority && !["Complete", "Closed"].includes(t.status)).length;
+        return { label: priority, value: count, displayValue: count, color: priority === "high" ? C.red : priority === "medium" ? C.yellow : C.green };
+      }).filter(d => d.value > 0);
+
       return (
         <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
@@ -6871,15 +7580,87 @@ Extract every identifiable expense. Use the most specific category possible. If 
               <StatCard label="Total Leads" value={leads.length} icon={I.user} accent={C.blue} />
               <StatCard label="Open Tickets" value={openTickets} icon={I.alert} accent={openTickets > 0 ? C.yellow : C.green} />
             </div>
-            {/* Report type + search */}
-            <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center" }}>
+
+            {/* Tab toggle: Charts / Table */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "center" }}>
               <div style={{ display: "flex", gap: 2, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, padding: 2 }}>
-                {[{ id: "company", label: "By Company" }, { id: "property", label: "By Property" }, { id: "contact", label: "By Contact" }].map(t => <button key={t.id} onClick={() => setReportType(t.id)} style={{ padding: "7px 16px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600, background: reportType === t.id ? C.navy : "transparent", color: reportType === t.id ? C.white : C.gray500, cursor: "pointer" }}>{t.label}</button>)}
+                {[{ id: "table", label: "Table View" }, { id: "charts", label: "Charts" }].map(t => (
+                  <button key={t.id} onClick={() => setReportTab(t.id)} style={{ padding: "7px 16px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600, background: reportTab === t.id ? C.navy : "transparent", color: reportTab === t.id ? C.white : C.gray500, cursor: "pointer" }}>{t.label}</button>
+                ))}
               </div>
-              <div style={{ position: "relative", flex: 1 }}><span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.gray400 }}>{I.search}</span>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ width: "100%", padding: "8px 10px 8px 34px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", background: C.white }} /></div>
+              {reportTab === "charts" && (
+                <select value={dateRange} onChange={e => setDateRange(e.target.value)} style={{ padding: "7px 12px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: C.navy, background: C.white, cursor: "pointer" }}>
+                  <option value="30">Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="365">Last 12 months</option>
+                  <option value="all">All time</option>
+                </select>
+              )}
             </div>
-            {/* Report table */}
+
+            {/* Charts tab */}
+            {reportTab === "charts" && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 20 }}>
+                {/* Pipeline funnel */}
+                <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Pipeline by Stage</h3>
+                  {pipelineData.length > 0 ? <BarChart data={pipelineData} width={400} height={220} /> : <p style={{ color: C.gray400, fontSize: 12 }}>No pipeline data available</p>}
+                </div>
+
+                {/* Market distribution */}
+                <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Leads by Market</h3>
+                  {marketLeadData.some(d => d.value > 0) ? <BarChart data={marketLeadData} width={400} height={220} /> : <p style={{ color: C.gray400, fontSize: 12 }}>No market data available</p>}
+                </div>
+
+                {/* Win rate donut charts by market */}
+                {["ATL", "TPA", "DFW"].map(market => {
+                  const awarded = leads.filter(l => {
+                    const comp = companies.find(c => c.id === l.companyId);
+                    return comp?.market === market && l.stage === "awarded";
+                  }).length;
+                  const lost = leads.filter(l => {
+                    const comp = companies.find(c => c.id === l.companyId);
+                    return comp?.market === market && l.stage === "closed_lost";
+                  }).length;
+                  const open = leads.filter(l => {
+                    const comp = companies.find(c => c.id === l.companyId);
+                    return comp?.market === market && !["awarded", "closed_lost"].includes(l.stage);
+                  }).length;
+                  const donutData = [
+                    { value: awarded, color: C.green },
+                    { value: lost, color: C.red },
+                    { value: open, color: C.blue }
+                  ].filter(d => d.value > 0);
+                  return (
+                    <div key={market} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                      <h3 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>{market} Win Rate</h3>
+                      {donutData.length > 0 ? <DonutChart data={donutData} size={160} label={`${((awarded / (awarded + lost)) * 100 || 0).toFixed(0)}%`} /> : <p style={{ color: C.gray400, fontSize: 12 }}>No data</p>}
+                      <div style={{ fontSize: 11, color: C.gray500, marginTop: 12, textAlign: "center" }}>Awarded: {awarded} · Lost: {lost}</div>
+                    </div>
+                  );
+                })}
+
+                {/* Service priority tickets */}
+                <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, padding: 20 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Tickets by Priority</h3>
+                  {ticketPriorityData.length > 0 ? <BarChart data={ticketPriorityData} width={400} height={220} /> : <p style={{ color: C.gray400, fontSize: 12 }}>No ticket data available</p>}
+                </div>
+              </div>
+            )}
+
+            {/* Table tab */}
+            {reportTab === "table" && (
+              <>
+                {/* Report type + search */}
+                <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 2, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, padding: 2 }}>
+                    {[{ id: "company", label: "By Company" }, { id: "property", label: "By Property" }, { id: "contact", label: "By Contact" }].map(t => <button key={t.id} onClick={() => setReportType(t.id)} style={{ padding: "7px 16px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600, background: reportType === t.id ? C.navy : "transparent", color: reportType === t.id ? C.white : C.gray500, cursor: "pointer" }}>{t.label}</button>)}
+                  </div>
+                  <div style={{ position: "relative", flex: 1 }}><span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.gray400 }}>{I.search}</span>
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ width: "100%", padding: "8px 10px 8px 34px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", background: C.white }} /></div>
+                </div>
+                {/* Report table */}
             <div style={{ borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden", background: C.white }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.gray50 }}>
@@ -6909,7 +7690,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 })}</tbody>
               </table>
               {rows.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.gray400, fontSize: 12 }}>No data yet. Add companies, leads, and tickets to see reports here.</div>}
-            </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       );
@@ -6921,21 +7704,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
     function AIAgent({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets, currentModule }) {
       const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [open, setOpen] = useState(false);
-      const todayKey = `cr_ai_chat_${new Date().toISOString().split("T")[0]}`;
-      const [messages, setMessages] = useState(() => {
-        try { const saved = localStorage.getItem(todayKey); return saved ? JSON.parse(saved) : []; } catch(e) { return []; }
-      });
+      const [messages, setMessages] = useState([]);
       const [input, setInput] = useState("");
       const [processing, setProcessing] = useState(false);
       const chatEndRef = useRef(null);
       const inputRef = useRef(null);
       const fileInputRef = useRef(null);
       const [attachedFile, setAttachedFile] = useState(null);
-
-      // Persist chat history (resets daily via todayKey)
-      useEffect(() => {
-        try { localStorage.setItem(todayKey, JSON.stringify(messages)); } catch(e) {}
-      }, [messages, todayKey]);
 
       useEffect(() => { if (open) { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); inputRef.current?.focus(); } }, [open, messages]);
 
@@ -6952,19 +7727,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "draft_email", description: "Send an email to a contact — logged to the CRM activity feed", input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
         { name: "get_crm_report", description: "Generate a CRM status report — pipeline summary, open tickets, recent activity. Use this when asked for updates, status reports, or summaries.", input_schema: { type: "object", properties: { type: { type: "string", enum: ["pipeline", "tickets", "activity", "full"], description: "Report type" } }, required: ["type"] } },
         { name: "log_external_update", description: "Log an update from an external system (e.g., Claude Co-Work) into the CRM activity feed", input_schema: { type: "object", properties: { entityType: { type: "string", enum: ["lead", "ticket", "company", "general"] }, entityId: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Source system name, e.g., 'Claude Co-Work'" } }, required: ["message"] } },
-        { name: "create_product", description: "Create a new product in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, category: { type: "string" }, manufacturer: { type: "string" }, sku: { type: "string" }, price: { type: "number" }, unit: { type: "string", description: "Unit of measure, e.g. each, bundle, sq, roll" }, description: { type: "string" } }, required: ["name"] } },
-        { name: "create_vendor", description: "Create a new vendor in the product catalog", input_schema: { type: "object", properties: { name: { type: "string" }, contactName: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, category: { type: "string" } }, required: ["name"] } },
         { name: "process_document", description: "Process an uploaded document (PDF, Excel, Word) to extract data for the catalog, vendor list, or other CRM data. Upload a pricing sheet to update product prices, a vendor list to create vendors, or other documents to extract structured data.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["update_pricing", "import_vendors", "import_products", "extract_data"], description: "What to do with the document data" }, data: { type: "array", items: { type: "object" }, description: "Extracted data rows from the document" } }, required: ["action", "data"] } },
-        { name: "update_company", description: "Update an existing company — change name, market, type, phone, address, notes", input_schema: { type: "object", properties: { companyId: { type: "string" }, name: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, type: { type: "string" }, phone: { type: "string" }, address: { type: "string" }, notes: { type: "string" } }, required: ["companyId"] } },
-        { name: "update_contact", description: "Update an existing contact — change name, email, phone, title, company", input_schema: { type: "object", properties: { contactId: { type: "string" }, name: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, title: { type: "string" }, companyId: { type: "string" } }, required: ["contactId"] } },
-        { name: "update_property", description: "Update an existing property — change name, address, sqft, roofType, buildingCount, company", input_schema: { type: "object", properties: { propertyId: { type: "string" }, name: { type: "string" }, address: { type: "string" }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, sqft: { type: "number" }, roofType: { type: "string" }, buildingCount: { type: "number" }, companyId: { type: "string" } }, required: ["propertyId"] } },
-        { name: "update_product", description: "Update an existing product in the catalog — change name, category, manufacturer, sku, price, unit, description", input_schema: { type: "object", properties: { productId: { type: "string" }, name: { type: "string" }, category: { type: "string" }, manufacturer: { type: "string" }, sku: { type: "string" }, price: { type: "number" }, unit: { type: "string" }, description: { type: "string" } }, required: ["productId"] } },
-        { name: "update_vendor", description: "Update an existing vendor — change name, contactName, phone, email, category", input_schema: { type: "object", properties: { vendorId: { type: "string" }, name: { type: "string" }, contactName: { type: "string" }, phone: { type: "string" }, email: { type: "string" }, category: { type: "string" } }, required: ["vendorId"] } },
-        { name: "create_assembly", description: "Create a new assembly in the catalog — a group of products that go together", input_schema: { type: "object", properties: { name: { type: "string" }, productIds: { type: "array", items: { type: "string" }, description: "Product IDs to include" }, laborCost: { type: "number" }, description: { type: "string" } }, required: ["name"] } },
-        { name: "update_assembly", description: "Update an existing assembly — change name, products, labor cost, description", input_schema: { type: "object", properties: { assemblyId: { type: "string" }, name: { type: "string" }, productIds: { type: "array", items: { type: "string" } }, laborCost: { type: "number" }, description: { type: "string" } }, required: ["assemblyId"] } },
-        { name: "create_system", description: "Create a new roof system in the catalog — a combination of assemblies and products", input_schema: { type: "object", properties: { name: { type: "string" }, assemblyIds: { type: "array", items: { type: "string" }, description: "Assembly IDs to include" }, standardSOW: { type: "string", description: "Standard scope of work text" }, description: { type: "string" } }, required: ["name"] } },
-        { name: "update_system", description: "Update an existing roof system — change name, assemblies, SOW, description", input_schema: { type: "object", properties: { systemId: { type: "string" }, name: { type: "string" }, assemblyIds: { type: "array", items: { type: "string" } }, standardSOW: { type: "string" }, description: { type: "string" } }, required: ["systemId"] } },
-        { name: "search_catalog", description: "Search products, vendors, assemblies, and systems in the catalog", input_schema: { type: "object", properties: { query: { type: "string" }, type: { type: "string", enum: ["all", "products", "vendors", "assemblies", "systems"] } }, required: ["query"] } },
       ];
 
       // ── Tool execution ───────────────────────────────────────
@@ -7072,16 +7835,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
             }
             return { success: true, message: `Logged update from ${input.source || "External"}: "${input.message}"` };
           }
-          if (name === "create_product") {
-            const product = { id, name: input.name, category: input.category || "General", manufacturer: input.manufacturer || "", sku: input.sku || "", price: Number(input.price) || 0, unit: input.unit || "each", description: input.description || "", dataSheets: [], createdAt: now };
-            if (firestoreDb) { try { await firestoreDb.collection("cr_product_catalog").add(product); } catch (e) { console.error(e); } }
-            return { success: true, message: `Created product "${input.name}" in catalog (ID: ${id})`, id };
-          }
-          if (name === "create_vendor") {
-            const vendor = { id, name: input.name, contactName: input.contactName || "", phone: input.phone || "", email: input.email || "", category: input.category || "General", createdAt: now };
-            if (firestoreDb) { try { await firestoreDb.collection("cr_vendors").add(vendor); } catch (e) { console.error(e); } }
-            return { success: true, message: `Created vendor "${input.name}" (ID: ${id})`, id };
-          }
           if (name === "process_document") {
             const { action, data } = input;
             if (!data || !data.length) return { success: false, message: "No data provided" };
@@ -7121,96 +7874,6 @@ Extract every identifiable expense. Use the most specific category possible. If 
             }
             return { success: false, message: `Unknown process_document action: ${action}` };
           }
-          // ── Update tools for directory objects ──
-          if (name === "update_company") {
-            const { companyId, ...updates } = input;
-            const found = companies.find(c => c.id === companyId);
-            if (!found) return { success: false, message: `Company ${companyId} not found` };
-            setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, ...updates } : c));
-            return { success: true, message: `Updated company "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "update_contact") {
-            const { contactId, ...updates } = input;
-            const found = contacts.find(c => c.id === contactId);
-            if (!found) return { success: false, message: `Contact ${contactId} not found` };
-            setContacts(prev => prev.map(c => c.id === contactId ? { ...c, ...updates } : c));
-            return { success: true, message: `Updated contact "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "update_property") {
-            const { propertyId, ...updates } = input;
-            const found = properties.find(p => p.id === propertyId);
-            if (!found) return { success: false, message: `Property ${propertyId} not found` };
-            setProperties(prev => prev.map(p => p.id === propertyId ? { ...p, ...updates } : p));
-            return { success: true, message: `Updated property "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          // ── Catalog update tools (read/write via Firestore + localStorage) ──
-          const readCatalogCollection = (key) => {
-            try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch(e) { return []; }
-          };
-          const writeCatalogCollection = async (key, data) => {
-            try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) {}
-            if (firestoreDb) { try { await firestoreDb.collection(key).doc("data").set({ items: data, updatedAt: new Date().toISOString() }); } catch(e) {} }
-          };
-          if (name === "update_product") {
-            const { productId, ...updates } = input;
-            const items = readCatalogCollection("cr_product_catalog");
-            const found = items.find(p => p.id === productId);
-            if (!found) return { success: false, message: `Product ${productId} not found` };
-            if (updates.price !== undefined) updates.price = Number(updates.price) || 0;
-            const updated = items.map(p => p.id === productId ? { ...p, ...updates, updatedAt: now } : p);
-            await writeCatalogCollection("cr_product_catalog", updated);
-            return { success: true, message: `Updated product "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "update_vendor") {
-            const { vendorId, ...updates } = input;
-            const items = readCatalogCollection("cr_vendors");
-            const found = items.find(v => v.id === vendorId);
-            if (!found) return { success: false, message: `Vendor ${vendorId} not found` };
-            const updated = items.map(v => v.id === vendorId ? { ...v, ...updates, updatedAt: now } : v);
-            await writeCatalogCollection("cr_vendors", updated);
-            return { success: true, message: `Updated vendor "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "create_assembly") {
-            const assembly = { id, name: input.name, productIds: input.productIds || [], laborCost: Number(input.laborCost) || 0, description: input.description || "", createdAt: now };
-            const items = readCatalogCollection("cr_assemblies");
-            await writeCatalogCollection("cr_assemblies", [...items, assembly]);
-            return { success: true, message: `Created assembly "${input.name}" (ID: ${id})`, id };
-          }
-          if (name === "update_assembly") {
-            const { assemblyId, ...updates } = input;
-            const items = readCatalogCollection("cr_assemblies");
-            const found = items.find(a => a.id === assemblyId);
-            if (!found) return { success: false, message: `Assembly ${assemblyId} not found` };
-            if (updates.laborCost !== undefined) updates.laborCost = Number(updates.laborCost) || 0;
-            const updated = items.map(a => a.id === assemblyId ? { ...a, ...updates, updatedAt: now } : a);
-            await writeCatalogCollection("cr_assemblies", updated);
-            return { success: true, message: `Updated assembly "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "create_system") {
-            const system = { id, name: input.name, assemblyIds: input.assemblyIds || [], standardSOW: input.standardSOW || "", description: input.description || "", createdAt: now };
-            const items = readCatalogCollection("cr_systems");
-            await writeCatalogCollection("cr_systems", [...items, system]);
-            return { success: true, message: `Created roof system "${input.name}" (ID: ${id})`, id };
-          }
-          if (name === "update_system") {
-            const { systemId, ...updates } = input;
-            const items = readCatalogCollection("cr_systems");
-            const found = items.find(s => s.id === systemId);
-            if (!found) return { success: false, message: `System ${systemId} not found` };
-            const updated = items.map(s => s.id === systemId ? { ...s, ...updates, updatedAt: now } : s);
-            await writeCatalogCollection("cr_systems", updated);
-            return { success: true, message: `Updated system "${found.name}": ${Object.entries(updates).map(([k,v]) => `${k}→${v}`).join(", ")}` };
-          }
-          if (name === "search_catalog") {
-            const q = (input.query || "").toLowerCase();
-            const t = input.type || "all";
-            const results = {};
-            if (t === "all" || t === "products") { const items = readCatalogCollection("cr_product_catalog"); results.products = items.filter(p => (p.name || "").toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q) || (p.manufacturer || "").toLowerCase().includes(q)).slice(0, 15).map(p => ({ id: p.id, name: p.name, category: p.category, manufacturer: p.manufacturer, sku: p.sku, price: p.price, unit: p.unit })); }
-            if (t === "all" || t === "vendors") { const items = readCatalogCollection("cr_vendors"); results.vendors = items.filter(v => (v.name || "").toLowerCase().includes(q) || (v.category || "").toLowerCase().includes(q)).slice(0, 15).map(v => ({ id: v.id, name: v.name, contactName: v.contactName, email: v.email, category: v.category })); }
-            if (t === "all" || t === "assemblies") { const items = readCatalogCollection("cr_assemblies"); results.assemblies = items.filter(a => (a.name || "").toLowerCase().includes(q)).slice(0, 15).map(a => ({ id: a.id, name: a.name, productCount: (a.productIds || []).length, laborCost: a.laborCost })); }
-            if (t === "all" || t === "systems") { const items = readCatalogCollection("cr_systems"); results.systems = items.filter(s => (s.name || "").toLowerCase().includes(q)).slice(0, 15).map(s => ({ id: s.id, name: s.name, assemblyCount: (s.assemblyIds || []).length })); }
-            return { success: true, results };
-          }
           return { success: false, message: `Unknown tool: ${name}` };
         } catch (e) { return { success: false, message: `Error: ${e.message}` }; }
       };
@@ -7225,7 +7888,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
         return `You are the AI assistant for Colony Roofers CRM. You can both ANSWER QUESTIONS and TAKE ACTIONS using tools. Be direct and concise. The user is ${user.name} (${user.email}), role: ${role}. Currently viewing: ${currentModule} module.
 
-IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm or search_catalog first. Always confirm what you did after taking actions. You can create AND UPDATE any object: companies, contacts, properties, leads, tickets, products, vendors, assemblies, and systems. Use search_catalog to find catalog item IDs. If you need clarification on required fields, ask the user before creating.
+IMPORTANT: When you need to create or update records, USE THE TOOLS. When you need to find an entity's ID before updating, use search_crm first. Always confirm what you did after taking actions.
 
 When drafting emails, use Zach's style: short (1-3 sentences), direct, casual but professional. Client emails get a brief personal opener. Internal emails skip pleasantries. Sign off: Zach Reece, Owner / Colony Roofers / 404-806-0956
 
@@ -7345,7 +8008,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               <div><div style={{ fontSize: 14, fontWeight: 700, color: C.white }}>CR Assistant</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>Can read & write your CRM</div></div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => { setMessages([]); try { localStorage.removeItem(todayKey); } catch(e) {} }} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", padding: "4px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>Clear</button>
+              <button onClick={() => setMessages([])} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", padding: "4px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600 }}>Clear</button>
               <button onClick={() => setOpen(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 8px", borderRadius: 5, fontSize: 16 }}>×</button>
             </div>
           </div>
@@ -7745,8 +8408,123 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       );
     }
 
+    // ============================================================
+    // CUSTOMER PORTAL COMPONENT
+    // ============================================================
+
+    function CustomerPortal({ token }) {
+      const [project, setProject] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [activeTab, setActiveTab] = useState("summary");
+
+      useEffect(() => {
+        const loadProject = async () => {
+          if (!firestoreDb || !token) return;
+          try {
+            const snap = await firestoreDb.collection("cr_portal_projects").where("portalToken", "==", token).get();
+            if (snap.docs.length > 0) {
+              setProject(snap.docs[0].data());
+            }
+            setLoading(false);
+          } catch (err) {
+            console.error("Portal load error:", err);
+            setLoading(false);
+          }
+        };
+        loadProject();
+      }, [token]);
+
+      if (loading) return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.gray50 }}>
+          <Spinner size={24} color={C.navy} />
+        </div>
+      );
+
+      if (!project) return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.gray50 }}>
+          <div style={{ textAlign: "center", padding: 32 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🔗</div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Link Expired</h1>
+            <p style={{ fontSize: 14, color: C.gray600 }}>This project portal link is no longer valid.</p>
+          </div>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight: "100vh", background: C.gray50 }}>
+          <div style={{ background: C.white, borderBottom: "1px solid " + C.gray200, padding: "24px" }}>
+            <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: C.navy, display: "flex", alignItems: "center", justifyContent: "center", color: C.white, fontWeight: 700 }}>CR</div>
+                <div>
+                  <h1 style={{ fontSize: 18, fontWeight: 700, color: C.navy, margin: 0 }}>Colony Roofers Project Portal</h1>
+                  <p style={{ fontSize: 12, color: C.gray500, margin: "4px 0 0" }}>{project.projectName || "Project Details"}</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 4, borderBottom: "1px solid " + C.gray200, paddingBottom: 12 }}>
+                {["summary", "documents", "timeline"].map(tab => (
+                  <button key={tab} onClick={() => setActiveTab(tab)} style={{ padding: "8px 16px", borderRadius: "6px 6px 0 0", border: "none", background: activeTab === tab ? C.white : "transparent", color: activeTab === tab ? C.navy : C.gray500, fontSize: 12, fontWeight: 600, cursor: "pointer", borderBottom: activeTab === tab ? "2px solid " + C.navy : "none" }}>
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px" }}>
+            {activeTab === "summary" && (
+              <div style={{ display: "grid", gap: 16 }}>
+                <div style={{ background: C.white, borderRadius: 10, padding: 20 }}>
+                  <h2 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Project Information</h2>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                    {[
+                      { label: "Address", value: project.propertyAddress },
+                      { label: "Homeowner", value: project.ownerName },
+                      { label: "Phone", value: project.ownerPhone },
+                      { label: "Status", value: project.status },
+                      { label: "Estimated Start", value: project.startDate ? new Date(project.startDate).toLocaleDateString() : "TBD" },
+                      { label: "Project Value", value: formatCurrency(project.contractValue || 0) }
+                    ].map((item, i) => (
+                      <div key={i}>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: C.gray600, textTransform: "uppercase", marginBottom: 4 }}>{item.label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.navy }}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "documents" && (
+              <div style={{ background: C.white, borderRadius: 10, padding: 20 }}>
+                <h2 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Project Documents</h2>
+                <DocumentList entityType="project" entityId={project.id} />
+              </div>
+            )}
+
+            {activeTab === "timeline" && (
+              <div style={{ background: C.white, borderRadius: 10, padding: 20 }}>
+                <h2 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 16px" }}>Project Timeline</h2>
+                <ActivityTimeline activities={project.activities || []} documents={project.documents || []} />
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     function App() {
+      // ── PORTAL DETECTION ──────────────────────────────────────
+      const portalToken = useMemo(() => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("portal");
+      }, []);
+
+      if (portalToken) return <CustomerPortal token={portalToken} />;
+
       const { user, loading, error, signIn, signOut } = useFirebaseAuth();
+      const isOnline = useOnlineStatus();
+      const isMobile = useIsMobile();
       const [activeModule, setActiveModule] = useState(null);
       const [showMenu, setShowMenu] = useState(false);
       const [settingsView, setSettingsView] = useState(null);
@@ -7828,6 +8606,15 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
         setMentions(prev => prev.map(m => m.targetEmail?.toLowerCase() === user?.email?.toLowerCase() ? { ...m, read: true } : m));
       }, [user, setMentions]);
 
+      // Enhanced notification engine
+      const engineAlerts = useNotificationEngine(salesLeadsData, serviceTicketsData, inspectionsData, [], user, crmUsers);
+      const allNotifications = useMemo(() => {
+        const mentionNotifs = myMentions.map(m => ({ id: m.id, type: "mention", title: m.from, message: m.context, severity: "info", createdAt: m.createdAt, read: m.read, source: "mention" }));
+        const engineNotifs = engineAlerts.map(a => ({ ...a, read: false, source: "engine" }));
+        return [...mentionNotifs, ...engineNotifs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }, [myMentions, engineAlerts]);
+      const totalUnread = allNotifications.filter(n => !n.read).length;
+
       const sharedEntities = { companies: companiesData, properties: propertiesData, contacts: contactsData, setCompanies, setProperties, setContacts };
 
       if (loading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navyLight})` }}><Spinner size={24} color="rgba(255,255,255,0.5)" /></div>;
@@ -7859,7 +8646,6 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
 
       const modules = [
         { key: "daily_digest", label: "Daily Digest", icon: "📅" },
-        { key: "tasks", label: "Task Manager", icon: "✅" },
         { key: "directory", label: "Directory", icon: "📇" },
         { key: "inspections", label: "Inspections", icon: "🔍" },
         { key: "sales", label: "Project Sales", icon: "💼" },
@@ -7868,6 +8654,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
         { key: "service", label: "Service", icon: "🔧" },
         { key: "finance", label: "Finance", icon: "💰" },
         { key: "reports", label: "Reports", icon: "📊" },
+        { key: "calendar", label: "Calendar", icon: "📆" },
         { key: "catalog", label: "Catalog", icon: "📦" },
       ].filter(m => allowedModules.includes(m.key));
 
@@ -7876,12 +8663,12 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
       return (
         <div style={{ minHeight: "100vh", background: C.gray50, display: "flex" }}>
           {/* Left Sidebar */}
-          <div style={{ width: sidebarOpen ? 230 : 0, minWidth: sidebarOpen ? 230 : 0, background: C.navy, transition: "width 0.2s ease, min-width 0.2s ease", overflow: "hidden", display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
+          <div style={{ width: sidebarOpen ? (isMobile ? "100%" : 230) : 0, minWidth: sidebarOpen ? (isMobile ? "280px" : 230) : 0, background: C.navy, transition: "width 0.2s ease, min-width 0.2s ease", overflow: "hidden", display: "flex", flexDirection: "column", height: "100vh", position: isMobile && sidebarOpen ? "fixed" : "sticky", top: 0, zIndex: isMobile && sidebarOpen ? 998 : 0, left: 0 }}>
             {/* Sidebar Header / Logo + Collapse */}
             <div style={{ padding: "16px 18px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, background: C.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.white, flexShrink: 0 }}>CR</div>
               <div style={{ color: C.white, whiteSpace: "nowrap", flex: 1 }}><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
-              <button onClick={() => setSidebarOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer", padding: "4px 6px", borderRadius: 4, flexShrink: 0 }} title="Collapse menu">◀</button>
+              <button onClick={() => setSidebarOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: isMobile ? 16 : 14, cursor: "pointer", padding: "4px 6px", borderRadius: 4, flexShrink: 0 }} title={isMobile ? "Close menu" : "Collapse menu"}>{isMobile ? "✕" : "◀"}</button>
             </div>
             {/* Module Nav Items */}
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
@@ -7898,6 +8685,11 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
             <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)" }} />
           </div>
 
+          {/* Mobile Sidebar Overlay */}
+          {isMobile && sidebarOpen && (
+            <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 997, display: "flex" }} />
+          )}
+
           {/* Main Content Area */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
             {/* Top Bar (thin - hamburger, notifications, profile) */}
@@ -7910,30 +8702,39 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               </div>
               {/* Notifications + Profile */}
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {!isOnline && <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: 10, fontWeight: 700, background: "#FEF3C7", color: "#D97706" }}>⚡ Offline</span>}
                 <div ref={notifRef} style={{ position: "relative" }}>
                   <button onClick={() => setShowNotifications(!showNotifications)} style={{ position: "relative", background: showNotifications ? C.gray100 : "transparent", border: "none", borderRadius: 8, padding: "6px 8px", cursor: "pointer", color: C.navy, fontSize: 18, display: "flex", alignItems: "center" }} title="Notifications">
                     🔔
-                    {unreadCount > 0 && <span style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 8, background: C.red, color: C.white, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{unreadCount > 9 ? "9+" : unreadCount}</span>}
+                    {totalUnread > 0 && <span style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 8, background: C.red, color: C.white, fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{totalUnread > 9 ? "9+" : totalUnread}</span>}
                   </button>
                   {showNotifications && (
                     <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 8, width: 360, maxHeight: 480, background: C.white, borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05)", overflow: "hidden", zIndex: 9999 }}>
                       <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Notifications</span>
-                        {unreadCount > 0 && <button onClick={markAllRead} style={{ fontSize: 11, color: C.blue, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Mark all read</button>}
+                        {totalUnread > 0 && <button onClick={markAllRead} style={{ fontSize: 11, color: C.blue, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>Mark all read</button>}
                       </div>
                       <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                        {myMentions.length === 0 ? (
+                        {allNotifications.length === 0 ? (
                           <div style={{ padding: 32, textAlign: "center", color: C.gray400, fontSize: 13 }}>No notifications yet</div>
-                        ) : myMentions.slice(0, 20).map(m => (
-                          <div key={m.id} onClick={() => markMentionRead(m.id)} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, background: m.read ? C.white : "#EFF6FF", cursor: "pointer", transition: "background 0.15s" }} onMouseEnter={e => { if (m.read) e.currentTarget.style.background = C.gray50; }} onMouseLeave={e => e.currentTarget.style.background = m.read ? C.white : "#EFF6FF"}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{m.from}</span>
-                              <span style={{ fontSize: 10, color: C.gray400 }}>{new Date(m.createdAt).toLocaleDateString()}</span>
+                        ) : allNotifications.slice(0, 20).map(n => {
+                          const severityColor = n.severity === "critical" ? C.red : n.severity === "warning" ? C.yellow : C.blue;
+                          const iconMap = { bid_due: "🔔", stale_lead: "⚠️", follow_up: "📋", emergency: "🚨", inspection: "🔍", mention: "💬" };
+                          const icon = iconMap[n.type] || "📌";
+                          return (
+                            <div key={n.id} onClick={() => { if (n.source === "mention") markMentionRead(n.id); }} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, borderLeft: `3px solid ${severityColor}`, background: n.read ? C.white : "#EFF6FF", cursor: "pointer", transition: "background 0.15s" }} onMouseEnter={e => { if (n.read) e.currentTarget.style.background = C.gray50; }} onMouseLeave={e => e.currentTarget.style.background = n.read ? C.white : "#EFF6FF"}>
+                              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                <span style={{ fontSize: 14, marginTop: 1 }}>{icon}</span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{n.title}</div>
+                                  <div style={{ fontSize: 11, color: C.gray600, lineHeight: 1.3 }}>{n.message}</div>
+                                  <div style={{ fontSize: 9, color: C.gray400, marginTop: 3 }}>{new Date(n.createdAt).toLocaleDateString()}</div>
+                                </div>
+                              </div>
+                              {!n.read && <div style={{ width: 6, height: 6, borderRadius: 3, background: C.blue, position: "absolute", right: 16, marginTop: -18 }} />}
                             </div>
-                            <div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.4 }}>{m.context}</div>
-                            {!m.read && <div style={{ width: 6, height: 6, borderRadius: 3, background: C.blue, position: "absolute", right: 16, marginTop: -18 }} />}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -8082,7 +8883,6 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                 </div>
               )}
               {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} crmUsers={crmUsers} />}
-              {!settingsView && currentModule === "tasks" && <TaskManagerModule user={user} role={role} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
               {!settingsView && currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
@@ -8091,6 +8891,7 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
               {!settingsView && currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "finance" && <FinanceModule user={user} role={role} />}
               {!settingsView && currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
+              {!settingsView && currentModule === "calendar" && <CalendarModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} />}
               {!settingsView && currentModule === "catalog" && <ProductCatalogModule user={user} role={role} crmUsers={crmUsers} />}
             </div>
 
