@@ -1597,17 +1597,33 @@
                           {jobEstimates.length === 0 ? (
                             <div style={{ padding: 20, textAlign: "center", color: C.gray400, fontSize: 12, background: C.gray50, borderRadius: 8 }}>No estimates yet</div>
                           ) : jobEstimates.map(est => (
-                            <div key={est.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, marginBottom: 8 }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <div key={est.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${expandedEstimate === est.id ? C.navy + "40" : C.gray200}`, marginBottom: 8 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, cursor: "pointer" }} onClick={() => setExpandedEstimate(expandedEstimate === est.id ? null : est.id)}>
                                 <div><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{fmt(est.totalPrice || 0)}</span><span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, textTransform: "uppercase", background: est.status === "approved" ? C.greenBg : est.status === "awarded" ? C.blueBg : est.status === "draft" ? C.gray100 : C.yellowBg, color: est.status === "approved" ? C.green : est.status === "awarded" ? C.blue : est.status === "draft" ? C.gray500 : C.yellow }}>{est.status}</span></div>
-                                <div style={{ display: "flex", gap: 4 }}>
+                                <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
                                   {(est.status === "draft" || est.status === "pending") && <button onClick={() => { setSelectedKanbanJob(null); editEstimate(est); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.navy}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>}
                                   {est.status === "pending" && (role === "estimator" || role === "admin") && <button onClick={() => { const sub = { ...est, status: "pending", submittedForApproval: true, submittedForApprovalAt: new Date().toISOString(), submittedForApprovalBy: user.name }; saveSubmission(sub).then(() => refresh()); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}`, background: C.white, color: C.blue, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Submit for Approval</button>}
                                   {est.status === "pending" && (role === "admin" || role === "lead_estimator") && <button onClick={() => { handleApprove(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.green, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓ Approve</button>}
                                   {est.status === "approved" && <button onClick={() => { handleAward(est); setSelectedKanbanJob(null); }} style={{ padding: "4px 10px", borderRadius: 5, border: "none", background: C.blue, color: C.white, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>🏆 Award</button>}
                                 </div>
                               </div>
-                              <div style={{ fontSize: 11, color: C.gray500 }}>{est.buildings?.length || 0} buildings · by {est.submittedBy || "—"} · {new Date(est.createdAt).toLocaleDateString()}</div>
+                              <div style={{ fontSize: 11, color: C.gray500, cursor: "pointer" }} onClick={() => setExpandedEstimate(expandedEstimate === est.id ? null : est.id)}>{est.buildings?.length || 0} buildings · by {est.submittedBy || "—"} · {new Date(est.createdAt).toLocaleDateString()} · <span style={{ color: C.blue, fontWeight: 600 }}>{expandedEstimate === est.id ? "▲ Hide Details" : "▼ View Details"}</span></div>
+                              {expandedEstimate === est.id && <div style={{ marginTop: 12, borderTop: `1px solid ${C.gray100}`, paddingTop: 12 }}>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
+                                  <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 9, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Roof Type</div><div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginTop: 2 }}>{est.estimateRoofType || "—"}</div></div>
+                                  <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 9, fontWeight: 700, color: C.gray400, textTransform: "uppercase" }}>Market</div><div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginTop: 2 }}>{est.market || est.project?.market || "—"}</div></div>
+                                  <div style={{ padding: "8px 10px", borderRadius: 6, background: C.greenBg, border: `1px solid ${C.green}30` }}><div style={{ fontSize: 9, fontWeight: 700, color: C.green, textTransform: "uppercase" }}>Total Price</div><div style={{ fontSize: 14, fontWeight: 800, color: C.green, marginTop: 2 }}>{fmt(est.totalPrice || 0)}</div></div>
+                                </div>
+                                {est.buildings && est.buildings.length > 0 && <div style={{ marginBottom: 10 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Buildings ({est.buildings.length})</div>
+                                  {est.buildings.map((b, i) => <div key={i} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.gray100}`, marginBottom: 3, fontSize: 11, display: "flex", justifyContent: "space-between" }}><span style={{ fontWeight: 600, color: C.navy }}>{b.siteplanNum || `Bldg ${i+1}`}</span><span style={{ color: C.gray500 }}>{(b.totalArea || 0).toLocaleString()} sf · Pitch: {b.predominantPitch || "—"}</span></div>)}
+                                </div>}
+                                {est.results && est.results.length > 0 && <div style={{ marginBottom: 10 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Pricing Breakdown</div>
+                                  {est.results.map((r, i) => <div key={i} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.gray100}`, marginBottom: 3, fontSize: 11, display: "flex", justifyContent: "space-between" }}><span style={{ fontWeight: 600, color: C.navy }}>{r.siteplanNum || `Bldg ${i+1}`}</span><span style={{ color: C.gray500 }}>Mat: {fmt(r.materialCost || 0)} · Labor: {fmt(r.laborCost || 0)} · <span style={{ fontWeight: 700, color: C.navy }}>{fmt(r.totalPrice || 0)}</span></span></div>)}
+                                </div>}
+                                {est.financials && <div style={{ padding: "8px 10px", borderRadius: 6, background: C.gray50, border: `1px solid ${C.gray200}`, fontSize: 11, color: C.gray600, marginBottom: 10 }}>Margin: {((est.financials.margin || 0) * 100).toFixed(0)}% · Tax Rate: {((est.financials.taxRate || 0) * 100).toFixed(1)}%</div>}
+                              </div>}
                               {est.status === "approved" && <button onClick={() => { setShowProposalGen(est.id); setProposalSOW(""); setProposalSystem(""); }} style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.navy}`, background: C.white, color: C.navy, fontSize: 10, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>📄 Generate Proposal</button>}
                               {est.submittedForApproval && <div style={{ fontSize: 10, color: C.blue, fontWeight: 600, marginTop: 4 }}>📤 Submitted for approval {est.submittedForApprovalAt ? `on ${new Date(est.submittedForApprovalAt).toLocaleDateString()}` : ""} by {est.submittedForApprovalBy || "—"}</div>}
                               {/* Proposal Generator */}
@@ -7228,7 +7244,15 @@ Extract every identifiable expense. Use the most specific category possible. If 
         );
       };
 
-      // --- Entity Detail Slide-out ---
+      // --- Entity Detail Slide-out (with inline editing) ---
+      const [editingEntity, setEditingEntity] = useState(null); // holds edited fields
+      const handleUpdateEntity = (type, id, updates) => {
+        if (type === "company") setCompanies(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+        if (type === "property") setProperties(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+        if (type === "contact") setContacts(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+        if (type === "subcontractor") setSubcontractors(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+        setEditingEntity(null);
+      };
       const EntityDetail = () => {
         if (!selected) return null;
         const { type, id } = selected;
@@ -7240,18 +7264,40 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const relContacts = type === "company" ? contacts.filter(c => c.companyId === id) : [];
         const parentCo = (type !== "company" && entity.companyId) ? companies.find(c => c.id === entity.companyId) : null;
         const insStatus = type === "subcontractor" ? getInsuranceStatus(entity) : null;
+        const isEditing = editingEntity && editingEntity._id === id;
+        const editData = isEditing ? editingEntity : null;
+        const startEdit = () => setEditingEntity({ ...entity, _id: id, _type: type });
+        const cancelEdit = () => setEditingEntity(null);
+        const saveEdit = () => {
+          const { _id, _type, ...fields } = editingEntity;
+          handleUpdateEntity(_type, _id, fields);
+        };
+        const setField = (k, v) => setEditingEntity(prev => ({ ...prev, [k]: v }));
+
+        const EditableField = ({ label, field, value }) => {
+          if (isEditing) {
+            return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${C.gray100}`, gap: 12 }}>
+              <span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize", minWidth: 80, flexShrink: 0 }}>{label}</span>
+              <input value={editData[field] || ""} onChange={e => setField(field, e.target.value)} style={{ fontSize: 12, fontWeight: 600, color: C.navy, border: `1px solid ${C.gray300}`, borderRadius: 4, padding: "4px 8px", flex: 1, textAlign: "right", outline: "none" }} />
+            </div>;
+          }
+          return <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize" }}>{label}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{String(value)}</span></div>;
+        };
 
         return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto" }} onClick={() => setSelected(null)}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(17,29,53,0.5)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflowY: "auto" }} onClick={() => { setSelected(null); cancelEdit(); }}>
             <div style={{ width: "100%", maxWidth: 800, background: C.white, margin: "40px auto", borderRadius: 16, boxShadow: "0 25px 60px rgba(0,0,0,0.3)", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
               <div style={{ padding: "20px 24px", background: `linear-gradient(135deg, ${C.navyDark}, ${C.navy})`, color: C.white }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     {parentCo && <button onClick={() => setSelected({ type: "company", id: parentCo.id })} style={{ background: "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>← {parentCo.name}</button>}
-                    <button onClick={() => setSelected(null)} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>✕ Close</button>
+                    <button onClick={() => { setSelected(null); cancelEdit(); }} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>✕ Close</button>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     <span style={{ fontSize: 10, fontWeight: 600, opacity: 0.6, textTransform: "uppercase" }}>{type}</span>
+                    {!isEditing && <button onClick={startEdit} style={{ background: "rgba(255,255,255,0.15)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>✏️ Edit</button>}
+                    {isEditing && <button onClick={saveEdit} style={{ background: "rgba(16,185,129,0.4)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>💾 Save</button>}
+                    {isEditing && <button onClick={cancelEdit} style={{ background: "rgba(255,255,255,0.1)", border: "none", cursor: "pointer", color: C.white, padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Cancel</button>}
                     <button onClick={() => handleDelete(type, id)} style={{ background: "rgba(239,68,68,0.3)", border: "none", cursor: "pointer", color: "#FCA5A5", padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>Delete</button>
                   </div>
                 </div>
@@ -7265,21 +7311,20 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <div style={{ marginBottom: 24 }}><h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 8px" }}>Details</h4>
                   {type === "subcontractor" ? (
                     <>
-                      {entity.companyName && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Company</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.companyName}</span></div>}
-                      {entity.contactName && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Contact</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.contactName}</span></div>}
-                      {entity.phone && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Phone</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.phone}</span></div>}
-                      {entity.email && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Email</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.email}</span></div>}
-                      {entity.market && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Market</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{MARKET_LABELS[entity.market] || entity.market}</span></div>}
+                      <EditableField label="Company" field="companyName" value={entity.companyName || ""} />
+                      <EditableField label="Contact" field="contactName" value={entity.contactName || ""} />
+                      <EditableField label="Phone" field="phone" value={entity.phone || ""} />
+                      <EditableField label="Email" field="email" value={entity.email || ""} />
+                      {(entity.market || isEditing) && <EditableField label="Market" field="market" value={MARKET_LABELS[entity.market] || entity.market || ""} />}
                       {entity.trades && entity.trades.length > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Trades</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.trades.join(", ")}</span></div>}
-                      {entity.insuranceExp && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Insurance Exp</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.insuranceExp}</span></div>}
-                      {entity.wcExp && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>W/C Exp</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.wcExp}</span></div>}
+                      {(entity.insuranceExp || isEditing) && <EditableField label="Insurance Exp" field="insuranceExp" value={entity.insuranceExp || ""} />}
+                      {(entity.wcExp || isEditing) && <EditableField label="W/C Exp" field="wcExp" value={entity.wcExp || ""} />}
                       <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Insurance Status</span><span style={{ fontSize: 12, fontWeight: 600, color: insStatus.color }}>{insStatus.label}</span></div>
                       {entity.w9OnFile !== undefined && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>W9 on File</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.w9OnFile ? "Yes" : "No"}</span></div>}
-                      {entity.rating && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Rating</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{"★".repeat(entity.rating) + "☆".repeat(5 - entity.rating)}</span></div>}
-                      {entity.notes && <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500 }}>Notes</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{entity.notes}</span></div>}
+                      {(entity.notes || isEditing) && <EditableField label="Notes" field="notes" value={entity.notes || ""} />}
                     </>
                   ) : (
-                    Object.entries(entity).filter(([k, v]) => !["id", "createdAt", "companyId"].includes(k) && v != null && v !== "" && typeof v !== "object").map(([k, v]) => <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.gray100}` }}><span style={{ fontSize: 12, color: C.gray500, textTransform: "capitalize" }}>{k.replace(/([A-Z])/g, " $1")}</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{String(v)}</span></div>)
+                    Object.entries(entity).filter(([k, v]) => !["id", "createdAt", "companyId"].includes(k) && (isEditing || (v != null && v !== "")) && typeof v !== "object").map(([k, v]) => <EditableField key={k} label={k.replace(/([A-Z])/g, " $1")} field={k} value={v != null ? String(v) : ""} />)
                   )}
                 </div>
                 {/* Related Properties */}
