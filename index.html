@@ -587,6 +587,125 @@
     const DEFAULT_FINANCIALS = { margin: 0.30, taxRate: 0.089 };
     const EMPTY_BUILDING = { siteplanNum: "", roofrNum: "", phase: 1, pipes: 0, totalArea: 0, pitchedArea: 0, flatArea: 0, predominantPitch: "5/12", eaves: 0, valleys: 0, hips: 0, ridges: 0, rakes: 0, wallFlashing: 0, stepFlashing: 0 };
 
+    // --- TPO / Beam AI Default Pricing ---
+    const TPO_UNIT_COSTS = {
+      "ROOF MEMBRANE": { cost: 1.85, unit: "SF", category: "material", desc: "TPO/PVC membrane" },
+      "TPO ROLL COUNT": { cost: 165.00, unit: "EA", category: "material", desc: "TPO roll (950 SF)" },
+      "PVC ROLL COUNT": { cost: 175.00, unit: "EA", category: "material", desc: "PVC roll (950 SF)" },
+      "DENS DECK": { cost: 32.00, unit: "EA", category: "material", desc: "1/2\" cover board 4x4" },
+      "ISO INSULATION BOARD": { cost: 55.00, unit: "EA", category: "material", desc: "6\" polyiso 4x8" },
+      "FASTENER": { cost: 0.18, unit: "EA", category: "material", desc: "Insulation fastener" },
+      "PLATE COUNT": { cost: 0.10, unit: "EA", category: "material", desc: "Stress plate" },
+      "LOW RISE FOAM COUNT": { cost: 425.00, unit: "EA/KIT", category: "material", desc: "Foam adhesive kit" },
+      "SEAM CLEANER": { cost: 12.00, unit: "EA", category: "material", desc: "Seam cleaner" },
+      "CAULKING": { cost: 6.50, unit: "EA", category: "material", desc: "Sealant tube" },
+      "T-PATCH": { cost: 4.50, unit: "EA", category: "material", desc: "T-patch" },
+      "BONDING ADHESIVE": { cost: 32.00, unit: "EA/GAL", category: "material", desc: "Bonding adhesive per gal" },
+      "WALK PADS": { cost: 3.25, unit: "SF", category: "material", desc: "Walk pad" },
+      "COVER TAPE": { cost: 18.00, unit: "ROLL", category: "material", desc: "Cover tape roll" },
+      "CUT EDGE SEALANT": { cost: 10.00, unit: "BOTTLE", category: "material", desc: "Cut edge sealant" },
+      "STEEL DECKING": { cost: 5.50, unit: "SF", category: "material", desc: "Steel roof deck" },
+      "MANUFACTURED METAL FASCIA": { cost: 12.00, unit: "LF", category: "accessory", desc: "Metal fascia" },
+      "MANUFACTURED METAL COPING": { cost: 15.00, unit: "LF", category: "accessory", desc: "Metal coping" },
+      "2'0\" STRETCHED OUT_MANUFACTURED METAL COPING": { cost: 15.00, unit: "LF", category: "accessory", desc: "Metal coping 2ft" },
+      "COUNTER FLASHING @ RTU CURB": { cost: 8.00, unit: "LF", category: "accessory", desc: "RTU counter flashing" },
+      "8\" FACTORY FINISHED GUTTER": { cost: 12.00, unit: "LF", category: "accessory", desc: "8\" gutter" },
+      "TERMINATION BAR": { cost: 2.00, unit: "LF", category: "accessory", desc: "Termination bar" },
+      "REGLET FLASHING BY CANOPY INSTALLER": { cost: 10.00, unit: "LF", category: "accessory", desc: "Reglet flashing" },
+      "MAKE IT CLAMP KIT": { cost: 45.00, unit: "LF", category: "accessory", desc: "Clamp kit" },
+      "FLASHING AROUND VENT (ASSUMED)": { cost: 8.00, unit: "LF", category: "accessory", desc: "Vent flashing" },
+      "4\" ROOF DRAINS": { cost: 185.00, unit: "EA", category: "accessory", desc: "4\" roof drain" },
+      "6\" ROOF DRAINS": { cost: 225.00, unit: "EA", category: "accessory", desc: "6\" roof drain" },
+      "4\" OVERFLOW DRAIN": { cost: 165.00, unit: "EA", category: "accessory", desc: "4\" overflow drain" },
+      "6\" OVERFLOW DRAIN": { cost: 195.00, unit: "EA", category: "accessory", desc: "6\" overflow drain" },
+      "2\" VTR": { cost: 65.00, unit: "EA", category: "accessory", desc: "2\" vent through roof" },
+      "3\" VTR": { cost: 75.00, unit: "EA", category: "accessory", desc: "3\" vent through roof" },
+      "8\" GUTTER W/ END CAP AND DEBRIS GUARD": { cost: 95.00, unit: "EA", category: "accessory", desc: "Gutter end cap kit" },
+      "DOWNSPOUT @ 2'2\" HT": { cost: 45.00, unit: "EA", category: "accessory", desc: "Downspout" },
+      "ROOF ACCESS HATCH": { cost: 350.00, unit: "EA", category: "accessory", desc: "Roof access hatch" },
+    };
+    const TPO_MEMBRANE_ITEMS = ["ROOF MEMBRANE UP & OVER PARAPET", "ROOF MEMBRANE AROUND", "ROOF MEMBRANE DROP DOWN", "ROOF MEMBRANE UP TO"];
+    const TPO_DEFAULT_LABOR = { installPerSf: 2.50, tearOffPerSf: 0.85, cleanupPerSf: 0.15 };
+    const TPO_DEFAULT_EQUIPMENT = { liftRental: 4500, dumpsters: 8500, permitCost: 4825, safetyEquip: 2500 };
+
+    function parseBeamAiXlsx(fileData) {
+      const wb = XLSX.read(fileData, { type: "array" });
+      const sheetName = wb.SheetNames.find(s => s.toUpperCase().includes("TAKEOFF")) || wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+      const assemblies = []; let current = null;
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const item = row[1]; // column B
+        const qty1 = row[2]; // column C
+        const unit1 = row[3]; // column D
+        const qty2 = row[4]; // column E
+        const unit2 = row[5]; // column F
+        const desc = row[6]; // column G
+        if (!item || typeof item !== "string") continue;
+        const itemStr = item.trim();
+        if (!itemStr) continue;
+        // Skip header row and notes
+        if (itemStr === "Item" || itemStr.startsWith("NOTE")) continue;
+        // Assembly header
+        if (itemStr.match(/^(ROOF ASSEMBLY|PREMANUFACTURED)/i)) {
+          current = { id: "asm_" + (assemblies.length + 1), name: itemStr, areaSf: typeof qty1 === "number" ? qty1 : 0, unit: unit1 || "SF", desc: desc || "", items: [] };
+          assemblies.push(current);
+          continue;
+        }
+        // Standalone items before first assembly
+        if (!current) {
+          current = { id: "asm_acc", name: "ACCESSORIES & DETAILS", areaSf: 0, unit: "", desc: "", items: [] };
+          assemblies.push(current);
+        }
+        // Match to pricing
+        let matchKey = itemStr;
+        const membraneMatch = TPO_MEMBRANE_ITEMS.find(m => itemStr.toUpperCase().startsWith(m));
+        if (membraneMatch) matchKey = itemStr; // keep full name for membrane details
+        const pricing = TPO_UNIT_COSTS[matchKey] || null;
+        const lineItem = {
+          id: "li_" + i,
+          item: itemStr,
+          qty: typeof qty1 === "number" ? Math.round(qty1 * 100) / 100 : 0,
+          unit: unit1 || "",
+          qty2: typeof qty2 === "number" ? Math.round(qty2 * 100) / 100 : null,
+          unit2: unit2 || null,
+          desc: desc || "",
+          unitCost: pricing ? pricing.cost : 0,
+          category: pricing ? pricing.category : (membraneMatch ? "accessory" : "material"),
+        };
+        // For membrane detail items (flashings, upturns) — price per LF
+        if (membraneMatch && !pricing) {
+          lineItem.unitCost = 6.50; // default membrane detail per LF
+          lineItem.category = "accessory";
+        }
+        current.items.push(lineItem);
+      }
+      return assemblies;
+    }
+
+    function calcTPOEstimate(assemblies, laborRates, equipCosts, financials) {
+      let materialCost = 0, accessoryCost = 0, totalSf = 0;
+      const lineDetails = [];
+      assemblies.forEach(asm => {
+        totalSf += asm.areaSf;
+        asm.items.forEach(li => {
+          const lineCost = li.qty * li.unitCost;
+          if (li.category === "accessory") accessoryCost += lineCost;
+          else materialCost += lineCost;
+          lineDetails.push({ ...li, assemblyName: asm.name, lineCost });
+        });
+      });
+      const laborCost = totalSf * (laborRates.installPerSf + laborRates.tearOffPerSf + laborRates.cleanupPerSf);
+      const equipCost = equipCosts.liftRental + equipCosts.dumpsters + equipCosts.permitCost + equipCosts.safetyEquip;
+      const subtotal = materialCost + accessoryCost + laborCost + equipCost;
+      const matTax = (materialCost + accessoryCost) * financials.taxRate;
+      const subWithTax = subtotal + matTax;
+      const margin = subWithTax / (1 - financials.margin) - subWithTax;
+      const total = subWithTax + margin;
+      return { materialCost, accessoryCost, laborCost, equipCost, matTax, margin, total, totalSf, pricePerSf: totalSf > 0 ? total / totalSf : 0, lineDetails };
+    }
+
     const SCOPE_ITEMS = [
       "Install temporary safety equipment to meet or exceed OSHA and company set safety guidelines.",
       "Remove existing shingles roofing system and all related accessories down to exposed roof deck.",
@@ -1027,6 +1146,13 @@
       const [proposalSystem, setProposalSystem] = useState("");
       const [proposalSOW, setProposalSOW] = useState("");
       const [editingEstimateId, setEditingEstimateId] = useState(null); // id of estimate being edited
+      // TPO / Beam AI state
+      const [tpoAssemblies, setTpoAssemblies] = useState([]);
+      const [tpoLabor, setTpoLabor] = useState({ ...TPO_DEFAULT_LABOR });
+      const [tpoEquip, setTpoEquip] = useState({ ...TPO_DEFAULT_EQUIPMENT });
+      const [beamAiProcessing, setBeamAiProcessing] = useState(false);
+      const [beamAiError, setBeamAiError] = useState(null);
+      const beamAiInputRef = useRef(null);
       const [catalogSystems] = useFirestoreCollection("cr_systems", []);
 
       const handleKanbanDragStart = (e, jobId) => { setDraggedJobId(jobId); e.dataTransfer.effectAllowed = "move"; };
@@ -1119,6 +1245,8 @@
         setEstimateRoofType("");
         setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]);
         setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
+        setTpoAssemblies([]); setTpoLabor({ ...TPO_DEFAULT_LABOR }); setTpoEquip({ ...TPO_DEFAULT_EQUIPMENT });
+        setBeamAiError(null);
         setView("new");
       };
 
@@ -1131,8 +1259,27 @@
         setLab(est.labor || { ...DEFAULT_LABOR });
         setEquip(est.equipment || { ...DEFAULT_EQUIPMENT });
         setFin(est.financials || { ...DEFAULT_FINANCIALS });
+        setTpoAssemblies(est.tpoAssemblies || []);
+        setTpoLabor(est.tpoLabor || { ...TPO_DEFAULT_LABOR });
+        setTpoEquip(est.tpoEquip || { ...TPO_DEFAULT_EQUIPMENT });
         setStep(1);
         setView("new");
+      };
+
+      const handleBeamAiUpload = async (file) => {
+        if (!file) return;
+        setBeamAiProcessing(true); setBeamAiError(null);
+        try {
+          const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = e => res(new Uint8Array(e.target.result)); r.onerror = () => rej(new Error("Read failed")); r.readAsArrayBuffer(file); });
+          const assemblies = parseBeamAiXlsx(data);
+          if (!assemblies || assemblies.length === 0) throw new Error("No takeoff data found. Make sure the file has a TAKEOFF sheet.");
+          setTpoAssemblies(assemblies);
+          setStep(2);
+        } catch (err) {
+          console.error("Beam AI parse error:", err);
+          setBeamAiError(err.message || "Failed to parse file");
+        }
+        setBeamAiProcessing(false);
       };
 
       // ── Submissions data ─────────────────────────────────────
@@ -1211,14 +1358,22 @@
         const co = lead ? (companies || []).find(c => c.id === lead.companyId) : null;
         const pr = lead ? (properties || []).find(p => p.id === lead.propertyId) : null;
         const project = { jobName: lead?.jobName || (co?.name ? `${co.name} — ${pr?.name || "Re-Roof"}` : pr?.name || "Re-Roof"), companyName: co?.name || "", address: pr?.address || "", market: lead?.market === "ATL" ? "atlanta" : lead?.market === "TPA" ? "tampa" : "dallas" };
-        const data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market, estimateRoofType };
+        let data;
+        if (estimateRoofType === "TPO") {
+          const tpoCalc = calcTPOEstimate(tpoAssemblies, tpoLabor, tpoEquip, financials);
+          data = { project, estimateRoofType, tpoAssemblies, tpoLabor, tpoEquip, financials, tpoCalcSummary: { materialCost: tpoCalc.materialCost, accessoryCost: tpoCalc.accessoryCost, laborCost: tpoCalc.laborCost, equipCost: tpoCalc.equipCost, matTax: tpoCalc.matTax, margin: tpoCalc.margin, totalSf: tpoCalc.totalSf, pricePerSf: tpoCalc.pricePerSf }, totalPrice: tpoCalc.total, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market, buildings: [] };
+        } else {
+          data = { project, buildings, materials, labor, equipment, financials, results, totalPrice: grandTotal, status: "pending", submittedBy: user.name, leadId: selectedLeadId, leadName: project.jobName, companyId: lead?.companyId, propertyId: lead?.propertyId, contactId: lead?.contactId, market: lead?.market, estimateRoofType };
+        }
         if (editingEstimateId) { data.id = editingEstimateId; data.updatedBy = user.name; data.updatedAt = new Date().toISOString(); }
         const saved = await saveSubmission(data);
         if (saved) {
-          const actionText = editingEstimateId ? `Estimate updated ($${grandTotal.toLocaleString()}) by ${user.name}` : `Estimate submitted ($${grandTotal.toLocaleString()}) by ${user.name}`;
+          const totalForLog = estimateRoofType === "TPO" ? Math.round(data.totalPrice) : grandTotal;
+          const actionText = editingEstimateId ? `Estimate updated ($${totalForLog.toLocaleString()}) by ${user.name}` : `Estimate submitted ($${totalForLog.toLocaleString()}) by ${user.name}`;
           if (setSalesLeads) { setSalesLeads(prev => prev.map(l => l.id === selectedLeadId ? { ...l, activities: [...(l.activities || []), { type: "estimate", text: actionText, by: user.name, at: new Date().toISOString() }] } : l)); }
           await refresh(); setView("kanban"); setStep(1); setSelectedLeadId(""); setEditingEstimateId(null);
           setBuildings([{ ...EMPTY_BUILDING, id: "b1" }]); setMat({ ...DEFAULT_MATERIALS }); setLab({ ...DEFAULT_LABOR }); setEquip({ ...DEFAULT_EQUIPMENT }); setFin({ ...DEFAULT_FINANCIALS });
+          setTpoAssemblies([]); setTpoLabor({ ...TPO_DEFAULT_LABOR }); setTpoEquip({ ...TPO_DEFAULT_EQUIPMENT });
         }
         setSaving(false);
       };
@@ -1501,11 +1656,10 @@
                 );
               })()}
 
-              {/* Beam AI placeholder */}
-              <div style={{ marginTop: 32, padding: "24px", borderRadius: 10, border: `2px dashed ${C.gray300}`, textAlign: "center" }}>
+              {/* Quick start TPO estimate */}
+              <div style={{ marginTop: 32, padding: "24px", borderRadius: 10, border: `2px dashed ${C.navy}30`, textAlign: "center", background: C.navy + "04" }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Low-Slope Estimates (Beam AI)</h3>
-                <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Import takeoffs from Beam AI for TPO, single-ply, and modified bitumen projects</p>
-                <button style={{ padding: "10px 24px", borderRadius: 8, border: `1px solid ${C.navy}30`, background: C.navy + "08", color: C.navy, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>📥 Import from Beam AI (Coming Soon)</button>
+                <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>Create a TPO estimate from a Beam AI takeoff — select a job and choose TPO as the estimate type</p>
               </div>
             </div>
           </div>
@@ -1523,7 +1677,7 @@
               <button onClick={() => setView("kanban")} style={{ padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>← Back to Board</button>
             </div>
             <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
-              {["Select Job", "Buildings", "Pricing", "Review"].map((s, i) => (
+              {(estimateRoofType === "TPO" ? ["Select Job", "Takeoff", "Pricing", "Review"] : ["Select Job", "Buildings", "Pricing", "Review"]).map((s, i) => (
                 <button key={i} onClick={() => setStep(i + 1)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: step === i + 1 ? C.navy : step > i + 1 ? C.green + "20" : C.gray100, color: step === i + 1 ? C.white : step > i + 1 ? C.green : C.gray500, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{i + 1}. {s}</button>
               ))}
             </div>
@@ -1553,14 +1707,109 @@
                     {selectedLead.estimatingNotes && <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 6, background: C.white, border: `1px solid ${C.yellow}30` }}><div style={{ fontSize: 10, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Notes from Sales</div><div style={{ fontSize: 12, color: C.gray600, lineHeight: 1.5 }}>{selectedLead.estimatingNotes}</div></div>}
                   </div>
                 )}
+                {/* Beam AI Upload for TPO */}
+                {estimateRoofType === "TPO" && selectedLeadId && (
+                  <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 10, border: `2px dashed ${beamAiProcessing ? C.blue : C.navy}40`, background: C.navy + "06" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 22 }}>📐</span>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Import from Beam AI</div>
+                          <div style={{ fontSize: 11, color: C.gray500 }}>Upload the Beam AI takeoff XLSX to auto-generate your TPO estimate</div>
+                        </div>
+                      </div>
+                      {beamAiProcessing ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} color={C.navy} /><span style={{ fontSize: 12, color: C.navy, fontWeight: 600 }}>Parsing takeoff...</span></div>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => beamAiInputRef.current?.click()} style={{ padding: "8px 18px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>{I.upload} Upload XLSX</button>
+                          <input ref={beamAiInputRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={e => { if (e.target.files?.[0]) handleBeamAiUpload(e.target.files[0]); e.target.value = ""; }} />
+                        </div>
+                      )}
+                    </div>
+                    {beamAiError && <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12 }}>{beamAiError}</div>}
+                    {tpoAssemblies.length > 0 && (
+                      <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, background: C.greenBg + "60", border: `1px solid ${C.green}40` }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.green }}>✓ Takeoff imported: {tpoAssemblies.length} roof section{tpoAssemblies.length > 1 ? "s" : ""} · {Math.round(tpoAssemblies.reduce((s, a) => s + a.areaSf, 0)).toLocaleString()} SF · {tpoAssemblies.reduce((s, a) => s + a.items.length, 0)} line items</div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-                  <button onClick={() => setStep(2)} disabled={!selectedLeadId || !estimateRoofType} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: selectedLeadId && estimateRoofType ? C.red : C.gray200, color: selectedLeadId && estimateRoofType ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: selectedLeadId && estimateRoofType ? "pointer" : "default" }}>Next → Buildings</button>
+                  <button onClick={() => setStep(2)} disabled={!selectedLeadId || !estimateRoofType} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: selectedLeadId && estimateRoofType ? C.red : C.gray200, color: selectedLeadId && estimateRoofType ? C.white : C.gray400, fontSize: 13, fontWeight: 600, cursor: selectedLeadId && estimateRoofType ? "pointer" : "default" }}>Next → {estimateRoofType === "TPO" ? "Takeoff" : "Buildings"}</button>
                 </div>
               </div>
             )}
 
-            {/* STEP 2: Buildings (spreadsheet layout) */}
-            {step === 2 && (
+            {/* STEP 2: TPO Takeoff Line Items */}
+            {step === 2 && estimateRoofType === "TPO" && (
+              <div>
+                {tpoAssemblies.length === 0 ? (
+                  <div style={{ background: C.white, borderRadius: 10, padding: 40, border: `1px solid ${C.gray200}`, textAlign: "center" }}>
+                    <div style={{ fontSize: 40, marginBottom: 12 }}>📐</div>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 8px" }}>Upload Beam AI Takeoff</h3>
+                    <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 20px" }}>Upload the XLSX takeoff from Beam AI to import material quantities</p>
+                    {beamAiProcessing ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><Spinner size={16} color={C.navy} /><span style={{ fontSize: 13, color: C.navy, fontWeight: 600 }}>Parsing...</span></div> : (
+                      <div><button onClick={() => beamAiInputRef.current?.click()} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.navy, color: C.white, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>📥 Upload XLSX</button></div>
+                    )}
+                    {beamAiError && <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, display: "inline-block" }}>{beamAiError}</div>}
+                  </div>
+                ) : (
+                  <div>
+                    {/* Summary bar */}
+                    <div style={{ background: C.navy, borderRadius: 10, padding: "14px 20px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 20 }}>
+                        <div><div style={{ fontSize: 10, color: C.white + "80", fontWeight: 600 }}>ROOF SECTIONS</div><div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>{tpoAssemblies.length}</div></div>
+                        <div><div style={{ fontSize: 10, color: C.white + "80", fontWeight: 600 }}>TOTAL AREA</div><div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>{Math.round(tpoAssemblies.reduce((s, a) => s + a.areaSf, 0)).toLocaleString()} SF</div></div>
+                        <div><div style={{ fontSize: 10, color: C.white + "80", fontWeight: 600 }}>LINE ITEMS</div><div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>{tpoAssemblies.reduce((s, a) => s + a.items.length, 0)}</div></div>
+                        <div><div style={{ fontSize: 10, color: C.white + "80", fontWeight: 600 }}>MATERIAL EST.</div><div style={{ fontSize: 18, fontWeight: 700, color: C.white }}>${Math.round(tpoAssemblies.reduce((s, a) => s + a.items.reduce((t, li) => t + li.qty * li.unitCost, 0), 0)).toLocaleString()}</div></div>
+                      </div>
+                      <button onClick={() => { setTpoAssemblies([]); beamAiInputRef.current?.click(); }} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.white}40`, background: "transparent", color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>↻ Re-import</button>
+                    </div>
+                    {/* Assembly sections with line items */}
+                    {tpoAssemblies.map((asm, ai) => (
+                      <div key={asm.id} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, marginBottom: 12, overflow: "hidden" }}>
+                        <div style={{ padding: "12px 16px", background: C.gray50, borderBottom: `1px solid ${C.gray200}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div><span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{asm.name}</span>{asm.areaSf > 0 && <span style={{ marginLeft: 10, fontSize: 12, color: C.gray500 }}>{Math.round(asm.areaSf).toLocaleString()} SF</span>}</div>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${Math.round(asm.items.reduce((t, li) => t + li.qty * li.unitCost, 0)).toLocaleString()}</span>
+                        </div>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                          <thead><tr style={{ background: C.gray50 }}>
+                            <th style={{ padding: "6px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400, borderBottom: `1px solid ${C.gray200}` }}>ITEM</th>
+                            <th style={{ padding: "6px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, borderBottom: `1px solid ${C.gray200}`, width: 80 }}>QTY</th>
+                            <th style={{ padding: "6px 10px", textAlign: "center", fontSize: 10, fontWeight: 700, color: C.gray400, borderBottom: `1px solid ${C.gray200}`, width: 60 }}>UNIT</th>
+                            <th style={{ padding: "6px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, borderBottom: `1px solid ${C.gray200}`, width: 90 }}>UNIT COST</th>
+                            <th style={{ padding: "6px 10px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400, borderBottom: `1px solid ${C.gray200}`, width: 90 }}>LINE TOTAL</th>
+                          </tr></thead>
+                          <tbody>{asm.items.map((li, idx) => (
+                            <tr key={li.id} style={{ borderBottom: `1px solid ${C.gray100}` }}>
+                              <td style={{ padding: "6px 10px", color: C.navy, fontWeight: 500 }}>{li.item}{li.desc && <div style={{ fontSize: 10, color: C.gray400, marginTop: 1 }}>{li.desc.length > 80 ? li.desc.slice(0, 80) + "…" : li.desc}</div>}</td>
+                              <td style={{ padding: "4px 4px" }}><input type="number" value={li.qty} onChange={e => { const v = parseFloat(e.target.value) || 0; setTpoAssemblies(prev => prev.map((a, i) => i === ai ? { ...a, items: a.items.map((it, j) => j === idx ? { ...it, qty: v } : it) } : a)); }} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${C.gray200}`, borderRadius: 4, fontSize: 12, textAlign: "right", color: C.navy, boxSizing: "border-box" }} /></td>
+                              <td style={{ padding: "6px 10px", textAlign: "center", color: C.gray500, fontSize: 11 }}>{li.unit}</td>
+                              <td style={{ padding: "4px 4px" }}><input type="number" step="0.01" value={li.unitCost} onChange={e => { const v = parseFloat(e.target.value) || 0; setTpoAssemblies(prev => prev.map((a, i) => i === ai ? { ...a, items: a.items.map((it, j) => j === idx ? { ...it, unitCost: v } : it) } : a)); }} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${li.unitCost === 0 ? C.red + "60" : C.gray200}`, borderRadius: 4, fontSize: 12, textAlign: "right", color: li.unitCost === 0 ? C.red : C.navy, boxSizing: "border-box" }} /></td>
+                              <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: C.navy }}>${(li.qty * li.unitCost).toFixed(2)}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    ))}
+                    {/* Items with $0 cost warning */}
+                    {tpoAssemblies.some(a => a.items.some(li => li.unitCost === 0 && li.qty > 0)) && (
+                      <div style={{ padding: "10px 14px", borderRadius: 8, background: C.yellowBg, border: `1px solid ${C.yellow}40`, marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: C.yellow }}>⚠ Some items have $0 unit cost — enter pricing above before continuing</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between" }}>
+                  <button onClick={() => setStep(1)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
+                  {tpoAssemblies.length > 0 && <button onClick={() => setStep(3)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Pricing</button>}
+                </div>
+              </div>
+            )}
+
+            {/* STEP 2: Buildings (spreadsheet layout) — Shingle/Tile */}
+            {step === 2 && estimateRoofType !== "TPO" && (
               <div>
                 {/* RoofR upload */}
                 <div style={{ background: C.white, borderRadius: 10, padding: "14px 20px", border: `2px dashed ${roofRProcessing ? C.blue : C.gray300}`, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1644,8 +1893,49 @@
               </div>
             )}
 
-            {/* STEP 3: Pricing */}
-            {step === 3 && (
+            {/* STEP 3: TPO Pricing */}
+            {step === 3 && estimateRoofType === "TPO" && (() => {
+              const tpoCalc = calcTPOEstimate(tpoAssemblies, tpoLabor, tpoEquip, financials);
+              return (
+              <div style={{ display: "grid", gap: 16 }}>
+                <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Labor Rates (per SF)</h4>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                    {[["Installation", "installPerSf"], ["Tear-Off", "tearOffPerSf"], ["Cleanup & Haul", "cleanupPerSf"]].map(([label, key]) => (
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>{label}</label><input style={numFs} type="number" step="0.01" value={tpoLabor[key]} onChange={e => setTpoLabor(l => ({ ...l, [key]: Number(e.target.value) }))} /></div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 12, color: C.gray500 }}>Total labor: ${((tpoLabor.installPerSf + tpoLabor.tearOffPerSf + tpoLabor.cleanupPerSf) * tpoCalc.totalSf).toLocaleString(undefined, { maximumFractionDigits: 0 })} ({tpoCalc.totalSf.toLocaleString()} SF × ${(tpoLabor.installPerSf + tpoLabor.tearOffPerSf + tpoLabor.cleanupPerSf).toFixed(2)}/SF)</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Equipment</h4>
+                    {[["Lift / Crane Rental", "liftRental"], ["Dumpsters", "dumpsters"], ["Permits", "permitCost"], ["Safety Equipment", "safetyEquip"]].map(([label, key]) => (
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>{label}</label><input style={numFs} type="number" step="1" value={tpoEquip[key]} onChange={e => setTpoEquip(eq => ({ ...eq, [key]: Number(e.target.value) }))} /></div>
+                    ))}
+                  </div>
+                  <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Margin & Tax</h4>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 11, color: C.gray600 }}>Margin (%)</label><input style={numFs} type="number" step="0.01" value={financials.margin} onChange={e => setFin(f => ({ ...f, margin: Number(e.target.value) }))} /></div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}><label style={{ fontSize: 11, color: C.gray600 }}>Tax Rate</label><input style={numFs} type="number" step="0.001" value={financials.taxRate} onChange={e => setFin(f => ({ ...f, taxRate: Number(e.target.value) }))} /></div>
+                    <div style={{ borderTop: `1px solid ${C.gray200}`, paddingTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Materials</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.materialCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Accessories</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.accessoryCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Labor</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.laborCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Equipment</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.equipCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Tax</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.matTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 12, color: C.gray600 }}>Margin ({Math.round(financials.margin * 100)}%)</span><span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>${tpoCalc.margin.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: `2px solid ${C.navy}`, paddingTop: 8, marginTop: 8 }}><span style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>TOTAL</span><span style={{ fontSize: 16, fontWeight: 800, color: C.green }}>${tpoCalc.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setStep(2)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button><button onClick={() => setStep(4)} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.red, color: C.white, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Next → Review</button></div>
+              </div>
+              );
+            })()}
+
+            {/* STEP 3: Shingle/Tile Pricing */}
+            {step === 3 && estimateRoofType !== "TPO" && (
               <div style={{ display: "grid", gap: 16 }}>
                 <div style={{ background: C.white, borderRadius: 10, padding: 20, border: `1px solid ${C.gray200}` }}>
                   <h4 style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "0 0 12px" }}>Material Unit Prices</h4>
@@ -1678,8 +1968,55 @@
               </div>
             )}
 
-            {/* STEP 4: Review */}
-            {step === 4 && (
+            {/* STEP 4: TPO Review */}
+            {step === 4 && estimateRoofType === "TPO" && (() => {
+              const tpoCalc = calcTPOEstimate(tpoAssemblies, tpoLabor, tpoEquip, financials);
+              return (
+              <div>
+                <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}`, marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{selectedLead?.jobName || leadCompany?.name || "—"} — TPO Estimate</h3>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: "0 0 16px" }}>{leadCompany?.name && selectedLead?.jobName ? `🏢 ${leadCompany.name} · ` : ""}{leadProperty?.name || ""} · Estimator: {selectedLead?.estimator || "—"}</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
+                    <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Roof Sections</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{tpoAssemblies.length}</p></div>
+                    <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Total Area</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>{Math.round(tpoCalc.totalSf).toLocaleString()} SF</p></div>
+                    <div style={{ padding: "12px 16px", borderRadius: 8, background: C.gray50 }}><p style={{ fontSize: 10, fontWeight: 700, color: C.gray400, textTransform: "uppercase", margin: "0 0 4px" }}>Price / SF</p><p style={{ fontSize: 20, fontWeight: 800, color: C.navy, margin: 0 }}>${tpoCalc.pricePerSf.toFixed(2)}</p></div>
+                    <div style={{ padding: "12px 16px", borderRadius: 8, background: C.greenBg }}><p style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: "uppercase", margin: "0 0 4px" }}>Total Price</p><p style={{ fontSize: 20, fontWeight: 800, color: C.green, margin: 0 }}>${Math.round(tpoCalc.total).toLocaleString()}</p></div>
+                  </div>
+                  {/* Cost breakdown */}
+                  <div style={{ borderRadius: 8, border: `1px solid ${C.gray200}`, overflow: "hidden", marginBottom: 16 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: C.gray50 }}><th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.gray400 }}>CATEGORY</th><th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.gray400 }}>AMOUNT</th></tr></thead>
+                      <tbody>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.navy }}>Materials</td><td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.navy }}>${tpoCalc.materialCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.navy }}>Accessories & Flashing</td><td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.navy }}>${tpoCalc.accessoryCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.navy }}>Labor ({tpoCalc.totalSf.toLocaleString()} SF × ${(tpoLabor.installPerSf + tpoLabor.tearOffPerSf + tpoLabor.cleanupPerSf).toFixed(2)})</td><td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.navy }}>${tpoCalc.laborCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.navy }}>Equipment</td><td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.navy }}>${tpoCalc.equipCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.gray500 }}>Material Tax ({(financials.taxRate * 100).toFixed(1)}%)</td><td style={{ padding: "8px 12px", textAlign: "right", color: C.gray600 }}>${tpoCalc.matTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                        <tr style={{ borderTop: `1px solid ${C.gray100}` }}><td style={{ padding: "8px 12px", color: C.gray500 }}>Margin ({Math.round(financials.margin * 100)}%)</td><td style={{ padding: "8px 12px", textAlign: "right", color: C.gray600 }}>${tpoCalc.margin.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td></tr>
+                      </tbody>
+                      <tfoot><tr style={{ background: C.navy + "08" }}><td style={{ padding: "10px 12px", fontWeight: 700, color: C.navy }}>Grand Total</td><td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 800, fontSize: 15, color: C.green }}>${Math.round(tpoCalc.total).toLocaleString()}</td></tr></tfoot>
+                    </table>
+                  </div>
+                  {/* Assembly breakdown */}
+                  {tpoAssemblies.map(asm => (
+                    <div key={asm.id} style={{ marginBottom: 8, padding: "10px 14px", borderRadius: 8, background: C.gray50, border: `1px solid ${C.gray100}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{asm.name}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{asm.items.length} items · ${Math.round(asm.items.reduce((t, li) => t + li.qty * li.unitCost, 0)).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                  <button onClick={() => setStep(3)} style={{ padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>← Back</button>
+                  <button onClick={handleSubmitEstimate} disabled={saving} style={{ padding: "12px 32px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #059669)`, color: C.white, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", gap: 8 }}>{saving ? <Spinner size={14} /> : "✓"} {editingEstimateId ? "Update Estimate" : "Submit for Approval"}</button>
+                </div>
+              </div>
+              );
+            })()}
+
+            {/* STEP 4: Shingle/Tile Review */}
+            {step === 4 && estimateRoofType !== "TPO" && (
               <div>
                 <div style={{ background: C.white, borderRadius: 10, padding: 24, border: `1px solid ${C.gray200}`, marginBottom: 16 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: C.navy, margin: "0 0 4px" }}>{selectedLead?.jobName || leadCompany?.name || "—"}</h3>
