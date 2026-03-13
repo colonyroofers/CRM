@@ -536,14 +536,15 @@
           setPhase("unassigned");
         } else if (targetColId === "assigned") {
           if (!job.estimator) {
-            const name = prompt("Assign estimator (enter name):");
-            if (name) handleAssignEstimator(job.id, name);
+            // Open the card detail modal so user can assign via dropdown
+            setSelectedKanbanJob(job);
+            alert("Please assign an estimator using the dropdown in the card detail.");
           }
           setPhase("assigned");
         } else if (targetColId === "in_progress") {
           if (!job.estimator) {
-            const name = prompt("Assign estimator first (enter name):");
-            if (name) handleAssignEstimator(job.id, name);
+            setSelectedKanbanJob(job);
+            alert("Please assign an estimator using the dropdown in the card detail first.");
           }
           setPhase("in_progress");
         } else if (targetColId === "approved") {
@@ -5218,7 +5219,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           </div>
           {showCreate && <CreateEntityModal type={showCreate} companies={companies} contacts={contacts} onClose={() => setShowCreate(null)} onCreate={handleCreate} />}
           {showCreateLead && <CreateLeadModal entities={entities} onClose={() => setShowCreateLead(null)} onCreate={handleCreateLead} prefill={showCreateLead} />}
-          {showCreateTicket && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} />}
+          {showCreateTicket && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreateTicket(null)} onCreate={handleCreateTicket} onCreateEntity={(type, data) => handleCreate(type, data)} prefill={showCreateTicket} crmUsers={crmUsers} />}
           <EntityDetail />
           {/* Lead detail overlay from directory */}
           {viewingLead && (() => {
@@ -6014,13 +6015,13 @@ Extract every identifiable expense. Use the most specific category possible. If 
               </div>
             ) : <div style={{ padding: 48, textAlign: "center", background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}><div style={{ fontSize: 36, opacity: 0.2, marginBottom: 12 }}>🔧</div><p style={{ fontSize: 13, color: C.gray400 }}>No tickets found</p></div>}
           </div>
-          {showCreate && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreate(false)} onCreate={handleCreate} onCreateEntity={handleCreateEntity} />}
+          {showCreate && <CreateTicketModal companies={companies} properties={properties} contacts={contacts} onClose={() => setShowCreate(false)} onCreate={handleCreate} onCreateEntity={handleCreateEntity} crmUsers={crmUsers} />}
           {selectedTicket && <TicketDetailPanel ticket={tickets.find(t => t.id === selectedTicket.id) || selectedTicket} co={co} prop={pr} ct={ct} onClose={() => setSelectedTicket(null)} onUpdate={handleUpdate} onDelete={handleDelete} user={user} crmUsers={crmUsers || []} onMention={onMention} inspections={inspections || []} setInspections={setInspections} />}
         </div>
       );
     }
 
-    function CreateTicketModal({ companies, properties, contacts, onClose, onCreate, onCreateEntity, prefill }) {
+    function CreateTicketModal({ companies, properties, contacts, onClose, onCreate, onCreateEntity, prefill, crmUsers }) {
       const [form, setForm] = useState({ subject: "", type: "Leak / Repair", priority: "Medium", market: "ATL", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", description: "", assignedTo: "" });
       const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
@@ -6052,7 +6053,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <div><label style={ls}>Contact</label><SearchableSelect options={filteredContacts.map(c => ({ value: c.id, label: c.name, sub: [c.email, c.phone].filter(Boolean).join(" · ") }))} value={form.contactId} onChange={v => setForm(f => ({ ...f, contactId: v }))} placeholder="Type to search contacts..." /></div>
                 </div>
               </div>
-              <div><label style={ls}>Assigned To</label><select style={fs} value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))}><option value="">Unassigned</option>{USERS.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
+              <div><label style={ls}>Assigned To</label><select style={fs} value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))}><option value="">Unassigned</option>{((crmUsers || []).filter(u => u.active !== false).length > 0 ? (crmUsers || []).filter(u => u.active !== false) : USERS).map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${ROLE_PRESETS[u.role]?.label || u.role})` : ""}</option>)}</select></div>
               <div><label style={ls}>Description</label><textarea style={{ ...fs, minHeight: 80, resize: "vertical" }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
               {validationError && <div style={{ padding: "8px 12px", borderRadius: 6, background: C.redBg, color: C.red, fontSize: 12, fontWeight: 600 }}>{validationError}</div>}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -6295,6 +6296,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 { value: "contact", label: "Contact" },
                 { value: "inspection", label: "Inspection" },
                 { value: "service_ticket", label: "Service Ticket" },
+                { value: "invoice", label: "Invoice" },
               ];
 
               const getObjectOptions = () => {
