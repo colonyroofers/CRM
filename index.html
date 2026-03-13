@@ -6382,8 +6382,25 @@ Extract every identifiable expense. Use the most specific category possible. If 
           React.createElement("input", { type: "number", placeholder: "Amount", value: newItem.amount, onChange: e => setNewItem(p => ({ ...p, amount: e.target.value })), style: { width: 100, padding: "8px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy, outline: "none", textAlign: "right" } }),
           React.createElement("button", { onClick: addItem, style: { padding: "8px 14px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer" } }, "+ Add")
         ),
-        /* Save button */
-        sovItems.length > 0 && React.createElement("button", { onClick: handleSave, style: { padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 12, fontWeight: 700, cursor: "pointer" } }, existingSov ? "Update SOV" : "Save Schedule of Values")
+        /* Save + Export buttons */
+        sovItems.length > 0 && React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+          React.createElement("button", { onClick: handleSave, style: { padding: "10px 20px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.red}, ${C.redDark})`, color: C.white, fontSize: 12, fontWeight: 700, cursor: "pointer" } }, existingSov ? "Update SOV" : "Save Schedule of Values"),
+          React.createElement("button", { onClick: () => {
+            const rows = [["Description", "Amount", "% Complete", "Completed Value"]];
+            sovItems.forEach(item => {
+              rows.push([item.description, item.amount.toFixed(2), item.completionPct, (item.amount * item.completionPct / 100).toFixed(2)]);
+            });
+            rows.push([]);
+            rows.push(["Total", totalSov.toFixed(2), "", completedValue.toFixed(2)]);
+            rows.push(["Project", projectName]);
+            const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = `SOV_${(projectName || "project").replace(/[^a-zA-Z0-9]/g, "_")}.csv`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+          }, style: { padding: "10px 20px", borderRadius: 8, border: `1px solid ${C.gray300}`, background: C.white, color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 } }, "📥 Export SOV")
+        )
       );
     }
 
@@ -6698,6 +6715,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
     function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets, crmUsers }) {
       const { companies, properties, contacts, subcontractors, setCompanies, setProperties, setContacts, setSubcontractors } = entities;
+      const isMobile = useIsMobile();
       const [tab, setTab] = useState("companies");
       const [search, setSearch] = useState("");
       const [showCreate, setShowCreate] = useState(null);
@@ -6899,19 +6917,19 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       return (
         <div style={{ background: C.gray50, minHeight: "calc(100vh - 56px)" }}>
-          <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
-              <div><h1 style={{ fontSize: 24, fontWeight: 800, color: C.navy, margin: 0 }}>Directory</h1><p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Companies, properties & contacts — the backbone of your CRM</p></div>
+          <div style={{ maxWidth: 1200, margin: "0 auto", padding: isMobile ? "16px" : "28px 32px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: isMobile ? 16 : 24 }}>
+              <div><h1 style={{ fontSize: isMobile ? 20 : 24, fontWeight: 800, color: C.navy, margin: 0 }}>Directory</h1>{!isMobile && <p style={{ fontSize: 14, color: C.gray500, margin: "4px 0 0" }}>Companies, properties & contacts — the backbone of your CRM</p>}</div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(4, 1fr)", gap: isMobile ? 8 : 16, marginBottom: isMobile ? 16 : 24 }}>
               <StatCard label="Companies" value={companies.length} icon={I.building} accent={C.navy} />
               <StatCard label="Properties" value={properties.length} icon={I.layers} accent={C.blue} />
               <StatCard label="Contacts" value={contacts.length} icon={I.user} accent={C.green} />
               <StatCard label="Subcontractors" value={(subcontractors || []).length} icon="🔧" accent={C.red} />
             </div>
             {/* Tabs + search */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 16, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, padding: 3 }}>
-              {[{ id: "companies", label: `Companies (${companies.length})` }, { id: "properties", label: `Properties (${properties.length})` }, { id: "contacts", label: `Contacts (${contacts.length})` }, { id: "subs", label: `Subs (${(subcontractors || []).length})` }].map(t => <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); }} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600, background: tab === t.id ? C.navy : "transparent", color: tab === t.id ? C.white : C.gray500, cursor: "pointer" }}>{t.label}</button>)}
+            <div style={{ display: "flex", gap: 4, marginBottom: 16, background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 8, padding: 3, overflowX: isMobile ? "auto" : "visible" }}>
+              {[{ id: "companies", label: isMobile ? `Co (${companies.length})` : `Companies (${companies.length})` }, { id: "properties", label: isMobile ? `Prop (${properties.length})` : `Properties (${properties.length})` }, { id: "contacts", label: isMobile ? `Ct (${contacts.length})` : `Contacts (${contacts.length})` }, { id: "subs", label: `Subs (${(subcontractors || []).length})` }].map(t => <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); }} style={{ flex: isMobile ? "0 0 auto" : 1, padding: isMobile ? "8px 12px" : "8px 0", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 600, background: tab === t.id ? C.navy : "transparent", color: tab === t.id ? C.white : C.gray500, cursor: "pointer", whiteSpace: "nowrap" }}>{t.label}</button>)}
             </div>
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <div style={{ position: "relative", flex: 1 }}><span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.gray400 }}>{I.search}</span>
