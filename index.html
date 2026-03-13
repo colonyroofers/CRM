@@ -4501,7 +4501,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                   <Row label="Cost to Date" value={formatCurrency(project.currentCost)} />
                   <Row label="Remaining Budget" value={formatCurrency(project.estimatedCost - project.currentCost)} accent={project.currentCost > project.estimatedCost ? C.red : C.green} />
                   <Row label="Est. Margin" value={`${project.estimatedMargin}%`} />
-                  <Row label="Current Margin" value={`${Math.round(((project.contractValue - project.currentCost) / project.contractValue) * 100)}%`} accent={marginHealth === "critical" ? C.red : marginHealth === "warning" ? C.yellow : C.green} />
+                  <Row label="Current Margin" value={`${project.contractValue ? Math.round(((project.contractValue - (project.currentCost || 0)) / project.contractValue) * 100) : 0}%`} accent={marginHealth === "critical" ? C.red : marginHealth === "warning" ? C.yellow : C.green} />
                 </Sec>
                 <Sec title="Project Details">
                   <Row label="Address" value={project.address || "—"} />
@@ -4605,8 +4605,8 @@ Extract every identifiable expense. Use the most specific category possible. If 
             <ProgressBar value={project.progress} color={project.status === "Delayed" ? C.yellow : C.green} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, paddingTop: 14, borderTop: `1px solid ${C.gray100}` }}>
-            <div><p style={{ fontSize: 10, color: C.gray400, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Contract</p><p style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "2px 0 0" }}>{formatCurrency(project.contractValue)}</p></div>
-            <div><p style={{ fontSize: 10, color: C.gray400, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Margin</p><p style={{ fontSize: 14, fontWeight: 700, margin: "2px 0 0", color: marginColor }}>{Math.round(((project.contractValue - project.currentCost) / project.contractValue) * 100)}%</p></div>
+            <div><p style={{ fontSize: 10, color: C.gray400, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Contract</p><p style={{ fontSize: 14, fontWeight: 700, color: C.navy, margin: "2px 0 0" }}>{formatCurrency(project.contractValue || 0)}</p></div>
+            <div><p style={{ fontSize: 10, color: C.gray400, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Margin</p><p style={{ fontSize: 14, fontWeight: 700, margin: "2px 0 0", color: marginColor }}>{project.contractValue ? Math.round(((project.contractValue - (project.currentCost || 0)) / project.contractValue) * 100) : 0}%</p></div>
             <div><p style={{ fontSize: 10, color: C.gray400, margin: 0, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Super</p><p style={{ fontSize: 12, fontWeight: 600, color: C.navy, margin: "3px 0 0" }}>{superName.split(" ")[0]}</p></div>
           </div>
         </div>
