@@ -5959,8 +5959,8 @@ TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
       const userModules = crmUser?.modules || ROLE_PRESETS[role]?.modules || ALL_MODULES;
       const isAdmin = role === "admin";
 
-      // Admin always has full access
-      const allowedModules = userModules;
+      // Admin always has full access; also ensure any new modules added to ALL_MODULES are available
+      const allowedModules = isAdmin ? ALL_MODULES : userModules;
       const currentModule = activeModule && allowedModules.includes(activeModule) ? activeModule : allowedModules[0] || "directory";
 
       // Check if user is active
