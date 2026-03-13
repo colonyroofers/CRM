@@ -501,6 +501,23 @@
       const [filter, setFilter] = useState("all");
       const [trackerSort, setTrackerSort] = useState("date");
       const [expandedEstimate, setExpandedEstimate] = useState(null);
+      const [draggedJobId, setDraggedJobId] = useState(null);
+
+      const handleKanbanDragStart = (e, jobId) => { setDraggedJobId(jobId); e.dataTransfer.effectAllowed = "move"; };
+      const handleKanbanDragOver = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; };
+      const handleKanbanDrop = (e, targetColId) => {
+        e.preventDefault();
+        if (!draggedJobId) return;
+        const job = estimatingJobs.find(j => j.id === draggedJobId);
+        if (!job) { setDraggedJobId(null); return; }
+        if (targetColId === "unassigned" && job.estimator) {
+          if (confirm("Remove estimator assignment?")) { handleAssignEstimator(job.id, ""); }
+        } else if (targetColId === "assigned" && !job.estimator) {
+          const name = prompt("Assign estimator (enter name):");
+          if (name) handleAssignEstimator(job.id, name);
+        }
+        setDraggedJobId(null);
+      };
 
       useEffect(() => { loadAllSubmissions().then(s => { setSubmissions(s); setLoading(false); }); }, []);
       const refresh = async () => { setLoading(true); const s = await loadAllSubmissions(); setSubmissions(s); setLoading(false); };
@@ -700,7 +717,12 @@
                           <div key={job.id} style={{ padding: "10px 16px", borderBottom: `1px solid ${C.gray100}`, borderRight: `1px solid ${C.gray100}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div>
                               <div style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{job.jobName || co?.name || "—"}</div>
-                              <div style={{ fontSize: 10, color: C.gray400 }}>{job.estimator || "Unassigned"}</div>
+                              <div style={{ fontSize: 10, color: C.gray400, marginTop: 2 }}>{job.estimator || "Unassigned"}</div>
+                              <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+                                {job.constructionType && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: job.constructionType === "New Construction" ? "#DBEAFE" : "#FEF3C7", color: job.constructionType === "New Construction" ? "#2563EB" : "#D97706" }}>{job.constructionType}</span>}
+                                {job.roofSlope && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: "#F3E8FF", color: "#7C3AED" }}>{job.roofSlope}</span>}
+                                {job.estimateMaterial && <span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 600, background: "#ECFDF5", color: "#059669" }}>{job.estimateMaterial}</span>}
+                              </div>
                             </div>
                             <div style={{ textAlign: "right" }}>
                               {job.bidDueDate ? (
@@ -724,7 +746,7 @@
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, alignItems: "flex-start" }}>
                   {kanbanCols.map(col => (
-                    <div key={col.id} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
+                    <div key={col.id} onDragOver={handleKanbanDragOver} onDrop={e => handleKanbanDrop(e, col.id)} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
                       <div style={{ padding: "12px 16px", borderBottom: `2px solid ${col.color}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{col.label}</span>
                         <span style={{ padding: "2px 8px", borderRadius: 10, background: col.color + "18", color: col.color, fontSize: 11, fontWeight: 700 }}>{col.jobs.length}</span>
@@ -736,7 +758,7 @@
                           const ests = estimatesForLead(job.id);
                           const approved = approvedForLead(job.id);
                           return (
-                            <div key={job.id} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${C.gray200}`, background: C.white, cursor: "pointer" }}>
+                            <div key={job.id} draggable onDragStart={e => handleKanbanDragStart(e, job.id)} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${draggedJobId === job.id ? C.blue : C.gray200}`, background: draggedJobId === job.id ? C.blueBg : C.white, cursor: "grab", opacity: draggedJobId === job.id ? 0.6 : 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.navy, marginBottom: 2 }}>{job.jobName || co?.name || job.company || "—"}</div>
                               {co && job.jobName && <div style={{ fontSize: 11, color: C.gray500, marginBottom: 2 }}>🏢 {co.name}</div>}
                               <div style={{ fontSize: 11, color: C.gray500, marginBottom: 6 }}>{pr?.name || "—"} {pr?.address ? `· ${pr.address}` : ""}</div>
@@ -4392,7 +4414,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
     function CreateLeadModal({ entities, onClose, onCreate, prefill }) {
       const { companies, properties, contacts } = entities;
-      const [form, setForm] = useState({ jobName: "", projectType: prefill?.projectType || "Apartment Complex", constructionType: "Replacement", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", market: "ATL", source: "ZoomInfo", estimatedValue: 0, notes: "" });
+      const [form, setForm] = useState({ jobName: "", projectType: prefill?.projectType || "Apartment Complex", constructionType: "Replacement", roofSlope: "Steep Slope", estimateMaterial: "Shingles", companyId: prefill?.companyId || "", propertyId: prefill?.propertyId || "", contactId: prefill?.contactId || "", market: "ATL", source: "ZoomInfo", estimatedValue: 0, notes: "" });
       const [validationError, setValidationError] = useState("");
       const fs = { width: "100%", padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none", boxSizing: "border-box" };
       const ls = { fontSize: 11, fontWeight: 600, color: C.gray600, marginBottom: 3, display: "block" };
@@ -4443,6 +4465,10 @@ Extract every identifiable expense. Use the most specific category possible. If 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div><label style={lsReq}>Project Type *</label><select style={fs} value={form.projectType} onChange={e => setForm(f => ({ ...f, projectType: e.target.value, companyId: e.target.value === "Residential" ? "" : f.companyId }))}>{PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                 <div><label style={lsReq}>Construction Type *</label><select style={fs} value={form.constructionType} onChange={e => setForm(f => ({ ...f, constructionType: e.target.value }))}><option value="Replacement">Replacement</option><option value="New Construction">New Construction</option></select></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div><label style={ls}>Roof Slope</label><select style={fs} value={form.roofSlope} onChange={e => setForm(f => ({ ...f, roofSlope: e.target.value }))}><option value="Steep Slope">Steep Slope</option><option value="Low-Slope">Low-Slope</option></select></div>
+                <div><label style={ls}>Material</label><select style={fs} value={form.estimateMaterial} onChange={e => setForm(f => ({ ...f, estimateMaterial: e.target.value }))}><option value="Shingles">Shingles</option><option value="Tile">Tile</option><option value="TPO">TPO</option><option value="Metal">Metal</option><option value="Modified Bitumen">Modified Bitumen</option><option value="Built-Up">Built-Up</option><option value="Single-Ply">Single-Ply</option><option value="Other">Other</option></select></div>
               </div>
               <div style={{ padding: "14px 16px", borderRadius: 10, background: C.gray50, border: `1px solid ${C.gray200}` }}>
                 <h4 style={{ fontSize: 11, fontWeight: 700, color: C.gray400, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>Link to Directory</h4>
