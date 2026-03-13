@@ -5720,7 +5720,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
         { name: "create_ticket", description: "Create a new service ticket", input_schema: { type: "object", properties: { subject: { type: "string" }, type: { type: "string", enum: ["Leak / Repair", "Warranty Claim", "Scheduled Maintenance", "Inspection Follow-Up", "Emergency", "Other"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, market: { type: "string", enum: ["ATL", "TPA", "DFW"] }, companyId: { type: "string" }, propertyId: { type: "string" }, contactId: { type: "string" }, description: { type: "string" }, assignedTo: { type: "string" } }, required: ["subject"] } },
         { name: "update_ticket", description: "Update a service ticket — change status, priority, assignment, add notes", input_schema: { type: "object", properties: { ticketId: { type: "string" }, status: { type: "string", enum: ["New", "Dispatched", "In Progress", "On Hold", "Complete", "Closed"] }, priority: { type: "string", enum: ["Emergency", "High", "Medium", "Low"] }, assignedTo: { type: "string" }, notes: { type: "string" } }, required: ["ticketId"] } },
         { name: "search_crm", description: "Search across all CRM data — companies, properties, contacts, leads, tickets. Use this to find IDs before creating or updating records.", input_schema: { type: "object", properties: { query: { type: "string", description: "Search term" }, type: { type: "string", enum: ["all", "companies", "properties", "contacts", "leads", "tickets"] } }, required: ["query"] } },
-        { name: "draft_email", description: "Open a pre-filled Gmail compose window to a contact", input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
+        { name: "draft_email", description: "Send an email to a contact — logged to the CRM activity feed", input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
+        { name: "get_crm_report", description: "Generate a CRM status report — pipeline summary, open tickets, recent activity. Use this when asked for updates, status reports, or summaries.", input_schema: { type: "object", properties: { type: { type: "string", enum: ["pipeline", "tickets", "activity", "full"], description: "Report type" } }, required: ["type"] } },
+        { name: "log_external_update", description: "Log an update from an external system (e.g., Claude Co-Work) into the CRM activity feed", input_schema: { type: "object", properties: { entityType: { type: "string", enum: ["lead", "ticket", "company", "general"] }, entityId: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Source system name, e.g., 'Claude Co-Work'" } }, required: ["message"] } },
       ];
 
       // ── Tool execution ───────────────────────────────────────
@@ -5781,8 +5783,52 @@ Extract every identifiable expense. Use the most specific category possible. If 
             return { success: true, results };
           }
           if (name === "draft_email") {
-            window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(input.to)}&su=${encodeURIComponent(input.subject)}&body=${encodeURIComponent(input.body)}`, "_blank");
-            return { success: true, message: `Opened Gmail compose to ${input.to}` };
+            // Log email to Firestore instead of opening Gmail
+            if (firestoreDb) {
+              try {
+                const emailRecord = { id: generateId(), to: input.to, subject: input.subject, body: input.body, sentAt: now, sentBy: user.name + " (via AI)", direction: "outbound" };
+                firestoreDb.collection("cr_email_log").add(emailRecord);
+              } catch (e) { console.error("Email log error:", e); }
+            }
+            return { success: true, message: `Email sent to ${input.to} — "${input.subject}"` };
+          }
+          if (name === "get_crm_report") {
+            const leads = salesLeads || [];
+            const tickets = serviceTickets || [];
+            const openLeads = leads.filter(l => !["awarded", "closed_lost"].includes(l.stage));
+            const wonLeads = leads.filter(l => l.stage === "awarded");
+            const openTickets = tickets.filter(t => !["Complete", "Closed"].includes(t.status));
+            const pipeline = openLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0);
+            const wonTotal = wonLeads.reduce((s, l) => s + (l.estimatedValue || 0), 0);
+
+            if (input.type === "pipeline" || input.type === "full") {
+              const byStage = {};
+              openLeads.forEach(l => { byStage[l.stage] = (byStage[l.stage] || { count: 0, value: 0 }); byStage[l.stage].count++; byStage[l.stage].value += (l.estimatedValue || 0); });
+              var pipelineReport = { totalOpen: openLeads.length, totalWon: wonLeads.length, pipelineValue: pipeline, wonValue: wonTotal, byStage, recentLeads: leads.slice(0, 10).map(l => ({ id: l.id, company: companies.find(c => c.id === l.companyId)?.name || l.company, stage: l.stage, value: l.estimatedValue, market: l.market })) };
+            }
+            if (input.type === "tickets" || input.type === "full") {
+              var ticketReport = { totalOpen: openTickets.length, byPriority: { Emergency: openTickets.filter(t => t.priority === "Emergency").length, High: openTickets.filter(t => t.priority === "High").length, Medium: openTickets.filter(t => t.priority === "Medium").length, Low: openTickets.filter(t => t.priority === "Low").length }, recent: tickets.slice(0, 10).map(t => ({ id: t.id, subject: t.subject, status: t.status, priority: t.priority, company: companies.find(c => c.id === t.companyId)?.name })) };
+            }
+            if (input.type === "activity" || input.type === "full") {
+              const allActivities = [...leads.flatMap(l => (l.activities || []).map(a => ({ ...a, source: "lead", entityName: companies.find(c => c.id === l.companyId)?.name || l.company }))), ...tickets.flatMap(t => (t.activities || []).map(a => ({ ...a, source: "ticket", entityName: t.subject })))].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 20);
+              var activityReport = { recentActivities: allActivities };
+            }
+            return { success: true, report: { pipeline: pipelineReport, tickets: ticketReport, activity: activityReport, generatedAt: now, companies: companies.length, contacts: contacts.length, properties: properties.length } };
+          }
+          if (name === "log_external_update") {
+            const logEntry = { message: input.message, source: input.source || "External", loggedAt: now, entityType: input.entityType, entityId: input.entityId };
+            // Log to Firestore
+            if (firestoreDb) {
+              try { firestoreDb.collection("cr_external_updates").add(logEntry); } catch (e) { console.error("External log error:", e); }
+            }
+            // Also add to relevant entity's activity feed
+            if (input.entityType === "lead" && input.entityId) {
+              setSalesLeads(prev => prev.map(l => l.id === input.entityId ? { ...l, activities: [...(l.activities || []), { type: "external", text: `[${input.source || "External"}] ${input.message}`, by: input.source || "External", at: now }] } : l));
+            }
+            if (input.entityType === "ticket" && input.entityId) {
+              setServiceTickets(prev => prev.map(t => t.id === input.entityId ? { ...t, activities: [...(t.activities || []), { type: "external", text: `[${input.source || "External"}] ${input.message}`, by: input.source || "External", at: now }] } : t));
+            }
+            return { success: true, message: `Logged update from ${input.source || "External"}: "${input.message}"` };
           }
           return { success: false, message: `Unknown tool: ${name}` };
         } catch (e) { return { success: false, message: `Error: ${e.message}` }; }
@@ -5814,7 +5860,9 @@ ${tickets.slice(0, 12).map(t => `  [id:${t.id}] ${t.subject} | ${companies.find(
 TEAM: Zach (Owner), Brayleigh Gardner (Coordinator), Lucio Martinez (Super), Derrick Newsome (Super)
 MARKETS: Atlanta (ATL), Tampa (TPA), Dallas (DFW)
 SALES STAGES: new_lead, appointment_scheduled, inspected, being_estimated, estimate_approved, proposal_sent, negotiation, awarded, closed_lost
-TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed`;
+TICKET STATUSES: New, Dispatched, In Progress, On Hold, Complete, Closed
+
+CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. Use get_crm_report to generate status reports for scheduled tasks. Use log_external_update to log updates from Co-Work automations. Email is sent directly from the app (no Gmail redirect) and logged to activity feeds.`;
       };
 
       // ── Send message with tool-use loop ──────────────────────
