@@ -5973,6 +5973,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         const propName = pr(lead.propertyId)?.name;
         return (
         <div draggable onDragStart={() => setDragLead(lead)}
+          onClick={() => setSelectedLead(lead)}
           onMouseDown={e => { leadCardMouseDown.current = { x: e.clientX, y: e.clientY }; }}
           onMouseUp={e => { const d = leadCardMouseDown.current; if (d && Math.abs(e.clientX - d.x) < 5 && Math.abs(e.clientY - d.y) < 5) { setSelectedLead(lead); } leadCardMouseDown.current = null; }}
           style={{ padding: "12px 14px", background: C.white, borderRadius: 8, border: `1px solid ${C.gray200}`, cursor: "pointer", marginBottom: 8, transition: "all 0.15s" }}
