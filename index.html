@@ -479,7 +479,7 @@
       { name: "Zach Reece", email: "zach@colonyroofers.com" },
     ];
 
-    function EstimatingModule({ user, role, entities, salesLeads, setSalesLeads }) {
+    function EstimatingModule({ user, role, entities, salesLeads, setSalesLeads, crmUsers }) {
       const { companies, properties, contacts } = entities || {};
       const [view, setView] = useState("kanban"); // "kanban" | "new" | "submissions"
       const [submissions, setSubmissions] = useState([]);
@@ -907,7 +907,7 @@
                           ))}
                         </div>}
                         {/* Tasks */}
-                        <div style={{ marginTop: 16 }}><TasksPanel objectType="estimate_job" objectId={job.id} user={user} /></div>
+                        <div style={{ marginTop: 16 }}><TasksPanel objectType="estimate_job" objectId={job.id} user={user} crmUsers={crmUsers} /></div>
                       </div>
                     </div>
                   </div>
@@ -1154,7 +1154,7 @@
                         <button onClick={() => setShowEmail(sub)} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.gray300}`, background: C.white, color: C.gray600, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>📧</button>
                       </div>
                     </div>
-                    {isExpanded && <div style={{ padding: "0 20px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="estimate" objectId={sub.id} user={user} /></div>}
+                    {isExpanded && <div style={{ padding: "0 20px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="estimate" objectId={sub.id} user={user} crmUsers={crmUsers} /></div>}
                   </div>
                 );
               })}
@@ -3869,7 +3869,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     // MODULE: PRODUCT CATALOG (Products, Vendors, Assemblies, Systems)
     // ============================================================
-    function ProductCatalogModule({ user, role }) {
+    function ProductCatalogModule({ user, role, crmUsers }) {
       const CATS = ["Shingles", "TPO/Membrane", "Underlayment", "Ice & Water", "Flashing", "Fasteners", "Sealants", "Accessories", "Equipment"];
       const VENDOR_TYPES = ["Distributor", "Manufacturer", "Subcontractor", "Equipment Rental", "Other"];
       const [products, saveProducts, catalogLoaded] = useFirestoreCollection("cr_product_catalog", [], null);
@@ -4121,7 +4121,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                           <button onClick={() => handleDeleteProduct(p.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button>
                         </td>
                       </tr>
-                      {isExp && <tr><td colSpan={6} style={{ padding: "8px 12px 16px", background: C.gray50 }}><TasksPanel objectType="catalog_product" objectId={p.id} user={user} /></td></tr>}
+                      {isExp && <tr><td colSpan={6} style={{ padding: "8px 12px 16px", background: C.gray50 }}><TasksPanel objectType="catalog_product" objectId={p.id} user={user} crmUsers={crmUsers} /></td></tr>}
                       </React.Fragment>);
                     })}
                   </tbody>
@@ -4183,7 +4183,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                         <td style={{ padding: "10px 8px", color: C.gray500, fontSize: 11 }}>{v.notes}</td>
                         <td style={{ padding: "10px 4px" }} onClick={e => e.stopPropagation()}><button onClick={() => handleDeleteVendor(v.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.gray400, fontSize: 14 }}>×</button></td>
                       </tr>
-                      {isExp && <tr><td colSpan={7} style={{ padding: "8px 12px 16px", background: C.gray50 }}><TasksPanel objectType="catalog_vendor" objectId={v.id} user={user} /></td></tr>}
+                      {isExp && <tr><td colSpan={7} style={{ padding: "8px 12px 16px", background: C.gray50 }}><TasksPanel objectType="catalog_vendor" objectId={v.id} user={user} crmUsers={crmUsers} /></td></tr>}
                       </React.Fragment>);
                     })}
                   </tbody>
@@ -4252,7 +4252,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                           {aProducts.length === 0 && <span style={{ fontSize: 11, color: C.gray400 }}>No products linked</span>}
                         </div>
                       </div>
-                      {isExp && <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="catalog_assembly" objectId={a.id} user={user} /></div>}
+                      {isExp && <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="catalog_assembly" objectId={a.id} user={user} crmUsers={crmUsers} /></div>}
                     </div>
                   );
                 })}
@@ -4340,7 +4340,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                           </div>
                         </div>}
                       </div>
-                      {isExp && <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="catalog_system" objectId={sys.id} user={user} /></div>}
+                      {isExp && <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.gray100}` }}><TasksPanel objectType="catalog_system" objectId={sys.id} user={user} crmUsers={crmUsers} /></div>}
                     </div>
                   );
                 })}
@@ -4960,7 +4960,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <InspectionsList inspections={inspections || []} entityType="lead" entityId={lead.id} onOpen={ins => setEditingInspection(ins)} onCreate={handleCreateInspection} />
                 {editingInspection && <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onClose={() => setEditingInspection(null)} user={user} crmUsers={crmUsers} />}
               </div>)}
-              {activeTab === "tasks" && (<TasksPanel objectType="project" objectId={lead.id} user={user} />)}
+              {activeTab === "tasks" && (<TasksPanel objectType="project" objectId={lead.id} user={user} crmUsers={crmUsers} />)}
               {activeTab === "activity" && (<div>
                 <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}>
                   <input value={newNote} onChange={e => handleNoteChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note... (use @name to mention)" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} />
@@ -4995,7 +4995,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
     // ============================================================
     const COMPANY_TYPES = ["Property Manager", "HOA / Condo", "Owner / Investor", "General Contractor", "Government", "Non-Profit", "Other"];
 
-    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets }) {
+    function DirectoryModule({ user, role, entities, salesLeads, serviceTickets, setSalesLeads, setServiceTickets, crmUsers }) {
       const { companies, properties, contacts, setCompanies, setProperties, setContacts } = entities;
       const [tab, setTab] = useState("companies");
       const [search, setSearch] = useState("");
@@ -5128,7 +5128,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 </div>
                 {/* Tasks */}
                 <div style={{ marginTop: 24 }}>
-                  <TasksPanel objectType={type} objectId={id} user={user} />
+                  <TasksPanel objectType={type} objectId={id} user={user} crmUsers={crmUsers} />
                 </div>
               </div>
             </div>
@@ -5366,7 +5366,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       return null;
     }
 
-    function TasksPanel({ objectType, objectId, user }) {
+    function TasksPanel({ objectType, objectId, user, crmUsers }) {
       const collectionKey = `cr_tasks_${objectType}_${objectId}`;
       const [tasks, saveTasks] = useFirestoreCollection(collectionKey, []);
       const tasksRef = useRef(tasks); tasksRef.current = tasks;
@@ -5375,6 +5375,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
       const [newDue, setNewDue] = useState("");
       const [newAssignee, setNewAssignee] = useState(user?.name || "");
       const [showCompleted, setShowCompleted] = useState(false);
+      const activeUsers = (crmUsers || []).filter(u => u.active !== false);
 
       // AI date detection: auto-detect dates as user types
       const handleTaskInput = (text) => {
@@ -5387,8 +5388,9 @@ Extract every identifiable expense. Use the most specific category possible. If 
 
       const addTask = () => {
         if (!newTask.trim()) return;
+        if (!newAssignee) { alert("Please assign the task to a user."); return; }
         const detectedDate = newDue || detectDateFromText(newTask) || null;
-        setTasks(prev => [...prev, { id: generateId(), title: newTask.trim(), dueDate: detectedDate, assignee: newAssignee || user.name, completed: false, createdAt: new Date().toISOString(), createdBy: user.name }]);
+        setTasks(prev => [...prev, { id: generateId(), title: newTask.trim(), dueDate: detectedDate, assignee: newAssignee, completed: false, createdAt: new Date().toISOString(), createdBy: user.name }]);
         setNewTask(""); setNewDue(""); setNewAssignee(user?.name || "");
       };
 
@@ -5408,7 +5410,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
           <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
             <input value={newTask} onChange={e => handleTaskInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addTask()} placeholder="Add a task... (dates like 'by March 20' auto-detected)" style={{ flex: 1, minWidth: 180, padding: "7px 10px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 12, color: C.navy }} />
             <input type="date" value={newDue} onChange={e => setNewDue(e.target.value)} title="Due date (auto-detected from task text)" style={{ padding: "7px 8px", border: `1px solid ${newDue ? C.green + "80" : C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, width: 120 }} />
-            <input value={newAssignee} onChange={e => setNewAssignee(e.target.value)} placeholder="Assignee" style={{ padding: "7px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, width: 110 }} />
+            <select value={newAssignee} onChange={e => setNewAssignee(e.target.value)} style={{ padding: "7px 8px", border: `1px solid ${C.gray300}`, borderRadius: 6, fontSize: 11, color: C.gray600, width: 150 }}>{activeUsers.length > 0 ? activeUsers.map(u => <option key={u.id} value={u.name}>{u.name}{u.role ? ` (${ROLE_PRESETS[u.role]?.label || u.role})` : ""}</option>) : <option value={user?.name || ""}>{user?.name || "Me"}</option>}</select>
             <button onClick={addTask} style={{ padding: "7px 14px", borderRadius: 6, border: "none", background: C.navy, color: C.white, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add</button>
           </div>
           {/* Pending tasks */}
@@ -6105,7 +6107,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
                 <InspectionsList inspections={inspections || []} entityType="ticket" entityId={ticket.id} onOpen={ins => setEditingInspection(ins)} onCreate={handleCreateInspection} />
                 {editingInspection && <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onClose={() => setEditingInspection(null)} user={user} crmUsers={crmUsers} />}
               </div>}
-              {activeTab === "tasks" && <TasksPanel objectType="ticket" objectId={ticket.id} user={user} />}
+              {activeTab === "tasks" && <TasksPanel objectType="ticket" objectId={ticket.id} user={user} crmUsers={crmUsers} />}
               {activeTab === "activity" && <div>
                 <div style={{ position: "relative", display: "flex", gap: 8, marginBottom: 20 }}><input value={newNote} onChange={e => handleNoteChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleAddNote(); }} placeholder="Add a note... (use @name to mention)" style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.gray300}`, borderRadius: 8, fontSize: 13, color: C.navy, outline: "none" }} /><button onClick={handleAddNote} disabled={!newNote.trim()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: newNote.trim() ? C.navy : C.gray200, color: newNote.trim() ? C.white : C.gray400, fontSize: 12, fontWeight: 600, cursor: newNote.trim() ? "pointer" : "default" }}>Add</button>
                   {showMentionSuggest && filteredMentionUsers.length > 0 && (
@@ -7594,15 +7596,15 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                 </div>
               )}
               {!settingsView && currentModule === "daily_digest" && <DailyDigestModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} inspections={inspectionsData} />}
-              {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} />}
+              {!settingsView && currentModule === "estimating" && <EstimatingModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} setSalesLeads={setSalesLeads} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "production" && <ProductionModule user={user} role={role} />}
               {!settingsView && currentModule === "sales" && <SalesModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
               {!settingsView && currentModule === "inspections" && <InspectionsModule user={user} role={role} inspections={inspectionsData} setInspections={setInspections} entities={sharedEntities} crmUsers={crmUsers} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
               {!settingsView && currentModule === "service" && <ServiceModule user={user} role={role} entities={sharedEntities} crmUsers={crmUsers} onMention={addMention} inspections={inspectionsData} setInspections={setInspections} />}
-              {!settingsView && currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} />}
+              {!settingsView && currentModule === "directory" && <DirectoryModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} crmUsers={crmUsers} />}
               {!settingsView && currentModule === "finance" && <FinanceModule user={user} role={role} />}
               {!settingsView && currentModule === "reports" && <ReportsModule user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} />}
-              {!settingsView && currentModule === "catalog" && <ProductCatalogModule user={user} role={role} />}
+              {!settingsView && currentModule === "catalog" && <ProductCatalogModule user={user} role={role} crmUsers={crmUsers} />}
             </div>
 
             <AIAgent user={user} role={role} entities={sharedEntities} salesLeads={salesLeads} serviceTickets={serviceTickets} setSalesLeads={setSalesLeads} setServiceTickets={setServiceTickets} currentModule={currentModule} />
