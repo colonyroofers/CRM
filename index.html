@@ -6606,14 +6606,14 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
 
       const modules = [
         { key: "directory", label: "Directory", icon: "📇" },
+        { key: "inspections", label: "Inspections", icon: "🔍" },
         { key: "sales", label: "Project Sales", icon: "💼" },
         { key: "estimating", label: "Estimating", icon: "📐" },
         { key: "production", label: "Production", icon: "🏗️" },
-        { key: "inspections", label: "Inspections", icon: "🔍" },
-        { key: "catalog", label: "Catalog", icon: "📦" },
         { key: "service", label: "Service", icon: "🔧" },
         { key: "finance", label: "Finance", icon: "💰" },
         { key: "reports", label: "Reports", icon: "📊" },
+        { key: "catalog", label: "Catalog", icon: "📦" },
       ].filter(m => allowedModules.includes(m.key));
 
       const roleColor = ROLE_COLORS[role] || C.gray500;
@@ -6622,10 +6622,11 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
         <div style={{ minHeight: "100vh", background: C.gray50, display: "flex" }}>
           {/* Left Sidebar */}
           <div style={{ width: sidebarOpen ? 230 : 0, minWidth: sidebarOpen ? 230 : 0, background: C.navy, transition: "width 0.2s ease, min-width 0.2s ease", overflow: "hidden", display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
-            {/* Sidebar Header / Logo */}
+            {/* Sidebar Header / Logo + Collapse */}
             <div style={{ padding: "16px 18px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
               <div style={{ width: 32, height: 32, borderRadius: 8, background: C.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.white, flexShrink: 0 }}>CR</div>
-              <div style={{ color: C.white, whiteSpace: "nowrap" }}><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
+              <div style={{ color: C.white, whiteSpace: "nowrap", flex: 1 }}><div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5 }}>Colony Roofers</div><div style={{ fontSize: 9, opacity: 0.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>CRM</div></div>
+              <button onClick={() => setSidebarOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 14, cursor: "pointer", padding: "4px 6px", borderRadius: 4, flexShrink: 0 }} title="Collapse menu">◀</button>
             </div>
             {/* Module Nav Items */}
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
@@ -6638,12 +6639,8 @@ CLAUDE CO-WORK INTEGRATION: This CRM supports integration with Claude Co-Work. U
                 </button>
               ))}
             </div>
-            {/* Sidebar Footer / Collapse */}
-            <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-              <button onClick={() => setSidebarOpen(false)} style={{ width: "100%", padding: "8px 0", border: "none", background: "transparent", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                ◀ Collapse
-              </button>
-            </div>
+            {/* Sidebar Footer */}
+            <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)" }} />
           </div>
 
           {/* Main Content Area */}
