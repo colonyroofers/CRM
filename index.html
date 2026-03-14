@@ -7707,7 +7707,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
             </div>
           ) : (
             <div key={t.id} onClick={() => openEditTask(t)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${C.gray100}`, cursor: "pointer" }} title="Click to edit">
-              <input type="checkbox" checked={false} onChange={e => { e.stopPropagation(); toggleTask(t.id); }} style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.green }} />
+              <input type="checkbox" checked={false} onClick={e => e.stopPropagation()} onChange={e => { e.stopPropagation(); toggleTask(t.id); }} style={{ width: 16, height: 16, cursor: "pointer", accentColor: C.green }} />
               <div style={{ flex: 1 }}>
                 <span style={{ fontSize: 12, color: C.navy }}>{t.title}</span>
                 {t.assignee && <span style={{ fontSize: 10, color: C.gray400, marginLeft: 6 }}>→ {t.assignee}</span>}
