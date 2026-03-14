@@ -1482,13 +1482,11 @@
                 );
               })()}
 
-              {estimatingJobs.length === 0 ? (
-                <div style={{ textAlign: "center", padding: 48, background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}` }}>
-                  <div style={{ fontSize: 48, opacity: 0.15, marginBottom: 12 }}>📐</div>
-                  <p style={{ fontSize: 15, fontWeight: 600, color: C.navy, margin: "0 0 4px" }}>No jobs being estimated</p>
-                  <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>Move a job to "Being Estimated" in Project Sales to see it here.</p>
+              {estimatingJobs.length === 0 && (
+                <div style={{ textAlign: "center", padding: 24, marginBottom: 16, background: C.white, borderRadius: 10, border: `1px dashed ${C.gray300}` }}>
+                  <p style={{ fontSize: 13, color: C.gray500, margin: 0 }}>No jobs being estimated yet — move a job to "Being Estimated" in Project Sales to get started.</p>
                 </div>
-              ) : (
+              )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, alignItems: "flex-start" }}>
                   {kanbanCols.map(col => (
                     <div key={col.id} onDragOver={handleKanbanDragOver} onDrop={e => handleKanbanDrop(e, col.id)} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.gray200}`, overflow: "hidden" }}>
@@ -1550,7 +1548,6 @@
                     </div>
                   ))}
                 </div>
-              )}
 
               {/* Estimate Detail Modal */}
               {selectedKanbanJob && (() => {
@@ -8821,7 +8818,7 @@ Extract every identifiable expense. Use the most specific category possible. If 
         return React.createElement("div", { onClick: () => { setEditingId(t.id); setEditTitle(t.title); setEditDue(t.dueDate || ""); setEditAssignee(t.assignee || ""); }, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: isFading ? C.greenBg : C.white, borderRadius: 8, border: `1px solid ${isFading ? C.green + "40" : C.gray200}`, marginBottom: 4, transition: "all 0.5s ease", cursor: "pointer", opacity: isFading ? 0.5 : 1 },
           onMouseEnter: e => { if (!isFading) e.currentTarget.style.borderColor = C.blue + "60"; },
           onMouseLeave: e => { if (!isFading) e.currentTarget.style.borderColor = C.gray200; } },
-          React.createElement("input", { type: "checkbox", checked: !!t.completed || isFading, onChange: e => { e.stopPropagation(); toggleTask(t); }, style: { width: 18, height: 18, cursor: "pointer", accentColor: C.green, flexShrink: 0 } }),
+          React.createElement("input", { type: "checkbox", checked: !!t.completed || isFading, onClick: e => e.stopPropagation(), onChange: e => { e.stopPropagation(); toggleTask(t); }, style: { width: 18, height: 18, cursor: "pointer", accentColor: C.green, flexShrink: 0 } }),
           React.createElement("div", { style: { flex: 1, minWidth: 0 } },
             React.createElement("div", { style: { fontSize: 13, fontWeight: 500, color: t.completed ? C.gray400 : C.navy, textDecoration: t.completed ? "line-through" : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.title),
             React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", marginTop: 3, flexWrap: "wrap" } },
